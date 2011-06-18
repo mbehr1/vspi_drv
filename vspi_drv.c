@@ -24,17 +24,30 @@
 #include <linux/fcntl.h>
 #include <linux/cdev.h>
 #include <linux/semaphore.h>
+#include <linux/spi/spidev.h> // for spi specific ioctl
+#include <asm/uaccess.h> // for access_ok
+#include <linux/wait.h> // wait queues
 #include "vspi_drv.h"
 
 // module parameter:
 int param_major = VSPI_MAJOR;
 module_param(param_major, int, S_IRUGO);
+
 int param_minor = 0;
 module_param(param_minor, int, S_IRUGO);
+
 int param_ber = 0; // module parameter bit error rate: 0 = none
 module_param(param_ber, int, S_IRUGO|S_IWUSR); // readable by all users in sysfs (/sys/module/vspi_drv/parameters/), changeable only by root
+MODULE_PARM_DESC(param_ber, "bit error rate for both directions");
+
 static unsigned long param_speed_cps = 18000000/8; // module parameter speed in cps.
 module_param(param_speed_cps, ulong, S_IRUGO); // only readable
+MODULE_PARM_DESC(param_speed_cps, "speed in bytes per second");
+
+static unsigned long param_max_bytes_per_ioreq = 4*1024; // todo use page_size constant
+module_param(param_max_bytes_per_ioreq, ulong, S_IRUGO);
+MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI message");
+
 
 struct vspi_dev *vspi_devices; // allocated in vspi_drv_init
 
@@ -46,6 +59,11 @@ struct file_operations vspi_fops = {
 		.open = vspi_open,
 		.release = vspi_release
 };
+
+#define SPI_MODE_MASK        (SPI_CPHA | SPI_CPOL | SPI_CS_HIGH \
+		| SPI_LSB_FIRST | SPI_3WIRE | SPI_LOOP \
+		| SPI_NO_CS | SPI_READY)
+
 // exit function on module unload:
 // used from _init as well in case of errors!
 
@@ -112,6 +130,7 @@ static int __init vspi_init(void)
 		vspi_devices[i].isMaster = ((i==0) ? 1 : 0); // first one is master
 		sema_init(&vspi_devices[i].sem, 1); // 1 = count
 		vspi_setup_cdev(&vspi_devices[i], i);
+		// rp and wp will be allocated in open
 	}
 
 	return 0; // 0 = success,
@@ -131,7 +150,36 @@ int vspi_open(struct inode *inode, struct file *filep)
 	dev = container_of(inode->i_cdev, struct vspi_dev, cdev);
 	filep->private_data = dev;
 
-	printk( KERN_ALERT "vspi open\n");
+	printk( KERN_NOTICE "vspi open\n");
+
+	if (down_interruptible(&dev->sem))
+		return -ERESTARTSYS;
+
+	// allow max 1 user at the same time
+	if (dev->isOpened){
+		up(&dev->sem);
+		return -EUSERS;
+	}else
+		dev->isOpened+=1;
+
+	// now we're holding/blocking the semaphore.
+	if (!dev->rp){
+		dev->rp = kmalloc(param_max_bytes_per_ioreq, GFP_KERNEL);
+		if (!dev->rp){
+			up(&dev->sem);
+			return -ENOMEM;
+		}
+	}
+	if (!dev->wp){
+		dev->wp = kmalloc(param_max_bytes_per_ioreq, GFP_KERNEL);
+		if (!dev->wp){
+			up(&dev->sem);
+			return -ENOMEM;
+		}
+	}
+
+	up(&dev->sem);
+	// now the semaphore is free again.
 
 	return 0; // success
 }
@@ -139,15 +187,50 @@ int vspi_open(struct inode *inode, struct file *filep)
 // close/release:
 int vspi_release(struct inode *inode, struct file *filep)
 {
-	// nothing to cleanup/release right now
+	struct vspi_dev *dev = filep->private_data;
+
+	printk( KERN_NOTICE "vspi_release\n");
+
+	if (down_interruptible(&dev->sem))
+		return -ERESTARTSYS;
+
+	if (!dev->isOpened){
+		printk( KERN_WARNING "vspi_release called with no one opened\n");
+	} else{
+		dev->isOpened-=1;
+	}
+	if (!dev->isOpened){
+		// now free the buffers:
+		if (dev->wp){
+			kfree(dev->wp);
+			dev->wp=0;
+		}
+		if (dev->rp){
+			kfree(dev->rp);
+			dev->rp = 0;
+		}
+	}
+
+	up(&dev->sem);
 
 	return 0; // success
 }
+
+static int vspi_message(struct vspi_dev *dev,
+		struct spi_ioc_transfer *u_xfers, unsigned n_xfers)
+{
+	// todo nyi
+	return 0;
+}
+
 // read:
 ssize_t vspi_read(struct file *filep, char __user *buf, size_t count, loff_t *f_pos)
 {
 	ssize_t retval = -ENOMEM;
 	struct vspi_dev *dev = filep->private_data;
+
+	if (count > param_max_bytes_per_ioreq)
+		return -EMSGSIZE;
 
 
 	return retval;
@@ -158,16 +241,132 @@ ssize_t vspi_write(struct file *filep, const char __user *buf, size_t count, lof
 {
 	ssize_t retval = -ENOMEM;
 
+	if (count > param_max_bytes_per_ioreq)
+		return -EMSGSIZE;
+
+
 	return retval;
 }
+
+
+
 
 // the ioctl implementation. This is our main function. read/write will just use this.
 // this is used as .unlocked_ioctl!
 long vspi_ioctl(struct file *filep,
 		unsigned int cmd, unsigned long arg)
 {
-	long retval = -EFAULT;
+	int err=0;
+	long retval = 0;
+	u32 tmp;
+	unsigned n_ioc;
+	struct spi_ioc_transfer *ioc;
 
+	struct vspi_dev *dev = filep->private_data;
+
+	if (_IOC_TYPE(cmd) != SPI_IOC_MAGIC)
+		return -ENOTTY;
+
+	/* check access direction one here:
+	 * IOC_DIR is from the user perspective, while access_ok is from the kernel
+	 * perspective
+	 */
+
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE,
+				(void __user *)arg, _IOC_SIZE(cmd));
+	if (err == 0 && _IOC_DIR(cmd) & _IOC_WRITE)
+		err = !access_ok(VERIFY_READ,
+				(void __user *)arg, _IOC_SIZE(cmd));
+	if (err)
+		return -EFAULT;
+
+	// todo guard against device removal while we do ioctl?
+	// do we have to use block the semaphore here?? (will take a long time...)
+
+	switch (cmd){
+	/* read requests */
+	case SPI_IOC_RD_MODE:
+		retval = __put_user(dev->mode & SPI_MODE_MASK,
+				(__u8 __user *)arg);
+		break;
+	case SPI_IOC_RD_LSB_FIRST:
+		retval = __put_user((dev->mode & SPI_LSB_FIRST) ? 1 : 0,
+				(__u8 __user *)arg);
+		break;
+	case SPI_IOC_RD_BITS_PER_WORD:
+		retval = __put_user(dev->bits_per_word, (__u8 __user *)arg);
+		break;
+	case SPI_IOC_RD_MAX_SPEED_HZ:
+		retval = __put_user(dev->max_speed_hz, (__u32 __user *)arg);
+		break;
+
+	/* write requests */
+	case SPI_IOC_WR_MODE:
+		retval = __get_user(tmp, (__u8 __user *)arg);
+		if (retval == 0){
+			if (tmp & ~SPI_MODE_MASK){
+				retval = -EINVAL;
+				break;
+			}
+			tmp |= dev->mode & ~SPI_MODE_MASK;
+			dev->mode = (u8)tmp;
+		}
+		break;
+	case SPI_IOC_WR_LSB_FIRST:
+		retval = __get_user(tmp, (__u8 __user *)arg);
+		if (0 == retval){
+			if (tmp)
+				dev->mode |= SPI_LSB_FIRST;
+			else
+				dev->mode &= ~SPI_LSB_FIRST;
+		}
+		break;
+	case SPI_IOC_WR_BITS_PER_WORD:
+		retval = __get_user(tmp, (__u8 __user *)arg);
+		if (0 == retval){
+			dev->bits_per_word = tmp;
+		}
+		break;
+	case SPI_IOC_WR_MAX_SPEED_HZ:
+		retval = __get_user(tmp, (__u32 __user *)arg);
+		if (0 == retval){
+			dev->max_speed_hz = tmp;
+		}
+		break;
+	default:
+		/* segmented and/or full-duplex I/O request */
+		if (_IOC_NR(cmd) != _IOC_NR(SPI_IOC_MESSAGE(0))
+				|| _IOC_DIR(cmd) != _IOC_WRITE){
+			// todo bug: we should allow _IOC_READ without _IOC_WRITE
+			// as well. But currently spidev behaves the same way!
+			retval = -ENOTTY;
+			break;
+		}
+		tmp = _IOC_SIZE(cmd);
+		if ((tmp % sizeof(struct spi_ioc_transfer)) != 0){
+			retval = -EINVAL;
+			break;
+		}
+		n_ioc = tmp / sizeof(struct spi_ioc_transfer);
+		if (0 == n_ioc)
+			break;
+
+		/* copy requests: */
+		ioc = kmalloc(tmp, GFP_KERNEL);
+		if (!ioc){
+			retval = -ENOMEM;
+			break;
+		}
+		if (__copy_from_user(ioc, (void __user *)arg, tmp)){
+			kfree(ioc);
+			retval = -EFAULT;
+			break;
+		}
+		retval = vspi_message(dev, ioc, n_ioc);
+		kfree(ioc);
+		break;
+	}
 
 	return retval;
 }

@@ -5,6 +5,8 @@
  *      Author: mbehr
  */
 
+#include <linux/spi/spi.h>
+
 #ifndef VSPI_DRV_H_
 #define VSPI_DRV_H_
 
@@ -18,8 +20,17 @@
 
 struct vspi_dev {
 	int isMaster; // indicated whether this device the SPI master or slave
+	int isOpened; // holds the number of opened clients (restricted to 1)
+	char *rp, *wp; // read and write pointer within each ioctl.
 	struct semaphore sem;
 	struct cdev cdev;
+
+	// spi parameters:
+	u32			max_speed_hz;
+	u8			chip_select;
+	u8			mode;
+	u8			bits_per_word;
+
 };
 
 // the configurable parameters
