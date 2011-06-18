@@ -4,6 +4,14 @@
  *  Created on: Jun 15, 2011
  *      Author: mbehr
  *  (c) M. Behr, 2011
+ *
+ *  Based on source code and documentation from the book
+ *  "Linux Device Drivers" by Alessandro Rubini and Jonathan Corbet,
+ *  published by O'Reilly & Associates.
+ *  Thanks a lot to Rubini, Corbet and O'Reilly!
+ *
+ * todo add GPLv2 lic here?
+ *
  */
 #include <linux/init.h>
 #include <linux/module.h>
