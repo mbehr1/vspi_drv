@@ -26,6 +26,7 @@
 #include <linux/semaphore.h>
 #include <linux/spi/spidev.h> // for spi specific ioctl
 #include <asm/uaccess.h> // for access_ok
+#include <linux/sched.h> // for TASK_INTERRUPTIBLE
 #include <linux/wait.h> // wait queues
 #include <linux/time.h>
 #include "vspi_drv.h"
@@ -53,6 +54,8 @@ MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI
 struct vspi_dev *vspi_devices; // allocated in vspi_drv_init
 
 DEFINE_SEMAPHORE(sem_interchange);
+//DECLARE_WAITQUEUE_HEAD(event_master);
+wait_queue_head_t event_master;
 
 struct file_operations vspi_fops = {
 		.owner = THIS_MODULE,
@@ -112,6 +115,8 @@ static int __init vspi_init(void)
 	dev_t dev=0;
 
 	printk( KERN_ALERT "vspi_drv_init (c) M. Behr, 2011\n");
+
+	init_waitqueue_head(&event_master);
 
 	if (param_major){
 		dev = MKDEV(param_major, param_minor);
@@ -308,6 +313,8 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 						client->xfer_len);
 
 			}
+			// wake up any slave
+			wake_up_interruptible(&event_master);
 
 			printk(KERN_NOTICE "vspi_xfer master %d bytes took %lu ns from %lld to %lld \n",
 					dev->xfer_len,
@@ -322,7 +329,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
-			mdelay(4000); // todo p1 fixme!
+			wait_event_interruptible_timeout(event_master,(1==0), 4*HZ );
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 

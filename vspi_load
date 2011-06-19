@@ -1,7 +1,8 @@
 #!/bin/sh
 module="vspi_drv"
 device="vspi_drv"
-mode="664"
+#mode="664" // should be changed back to 664
+mode="777"
 
 # Group: since distributions do it differently, look for wheel or use staff
 if grep -q '^users:' /etc/group; then
