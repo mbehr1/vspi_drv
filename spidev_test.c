@@ -29,10 +29,10 @@ static void pabort(const char *s)
 	abort();
 }
 
-static const char *device = "/dev/spidev1.1";
+static const char *device = "/dev/vspi_drv0";
 static uint8_t mode;
 static uint8_t bits = 8;
-static uint32_t speed = 500000;
+static uint32_t speed = 18000000;
 static uint16_t delay;
 
 static void transfer(int fd)

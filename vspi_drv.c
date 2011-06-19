@@ -71,12 +71,17 @@ static void vspi_exit(void)
 {
 	int i;
 	dev_t devno = MKDEV(param_major, param_minor);
-	printk( KERN_NOTICE "vspi_exit\n");
+	printk( KERN_ALERT "vspi_exit\n");
 
 	// get rid of our devices:
 	if (vspi_devices){
 		for(i=0; i<VSPI_NR_DEVS; i++){
 			cdev_del(&vspi_devices[i].cdev);
+			// we don't rely on release being called. So check to free buffers here again:
+			if (vspi_devices[i].rp)
+				kfree(vspi_devices[i].rp);
+			if (vspi_devices[i].wp)
+				kfree(vspi_devices[i].wp);
 		}
 		kfree(vspi_devices);
 		vspi_devices=0;
@@ -189,7 +194,7 @@ int vspi_release(struct inode *inode, struct file *filep)
 {
 	struct vspi_dev *dev = filep->private_data;
 
-	printk( KERN_NOTICE "vspi_release\n");
+	printk( KERN_ALERT "vspi_release\n");
 
 	if (down_interruptible(&dev->sem))
 		return -ERESTARTSYS;

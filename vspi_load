@@ -4,8 +4,8 @@ device="vspi_drv"
 mode="664"
 
 # Group: since distributions do it differently, look for wheel or use staff
-if grep -q '^staff:' /etc/group; then
-    group="staff"
+if grep -q '^users:' /etc/group; then
+    group="users"
 else
     group="wheel"
 fi
