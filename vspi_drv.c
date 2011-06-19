@@ -155,7 +155,10 @@ int vspi_open(struct inode *inode, struct file *filep)
 	dev = container_of(inode->i_cdev, struct vspi_dev, cdev);
 	filep->private_data = dev;
 
-	printk( KERN_NOTICE "vspi open\n");
+	if (dev->isMaster)
+		printk( KERN_NOTICE "vspi open master\n");
+	else
+		printk( KERN_NOTICE "vspi open slave\n");
 
 	if (down_interruptible(&dev->sem))
 		return -ERESTARTSYS;
@@ -194,7 +197,10 @@ int vspi_release(struct inode *inode, struct file *filep)
 {
 	struct vspi_dev *dev = filep->private_data;
 
-	printk( KERN_ALERT "vspi_release\n");
+	if(dev->isMaster)
+		printk( KERN_ALERT "vspi_release master\n");
+	else
+		printk( KERN_ALERT "vspi_release slave\n");
 
 	if (down_interruptible(&dev->sem))
 		return -ERESTARTSYS;
