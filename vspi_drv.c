@@ -27,6 +27,7 @@
 #include <linux/spi/spidev.h> // for spi specific ioctl
 #include <asm/uaccess.h> // for access_ok
 #include <linux/wait.h> // wait queues
+#include <linux/time.h>
 #include "vspi_drv.h"
 
 // module parameter:
@@ -50,6 +51,8 @@ MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI
 
 
 struct vspi_dev *vspi_devices; // allocated in vspi_drv_init
+
+DEFINE_SEMAPHORE(sem_interchange);
 
 struct file_operations vspi_fops = {
 		.owner = THIS_MODULE,
@@ -135,6 +138,7 @@ static int __init vspi_init(void)
 		vspi_devices[i].isMaster = ((i==0) ? 1 : 0); // first one is master
 		sema_init(&vspi_devices[i].sem, 1); // 1 = count
 		vspi_setup_cdev(&vspi_devices[i], i);
+		vspi_devices[i].max_speed_cps = param_speed_cps;
 		// rp and wp will be allocated in open
 	}
 
@@ -227,36 +231,164 @@ int vspi_release(struct inode *inode, struct file *filep)
 	return 0; // success
 }
 
-static int vspi_message(struct vspi_dev *dev,
+/*
+ * calctimeforxfer_us
+ * return the time in ns (10⁻9s) it takes to do the transfer.
+ */
+
+static unsigned long calctimeforxfer_ns(unsigned cnt, u32 speed)
+{
+	return cnt*(NSEC_PER_SEC/speed);
+}
+
+static int vspi_handletransfers(struct vspi_dev *dev,
 		struct spi_ioc_transfer *u_xfers, unsigned n_xfers)
 {
-	// todo nyi
-	return 0;
+	int retval=-EFAULT;
+	unsigned n, total=0;
+	struct spi_ioc_transfer *u_tmp;
+	unsigned long delay_len;
+	struct timespec ts;
+	struct vspi_dev *client;
+
+	for(n=0, u_tmp=u_xfers; n<n_xfers; n++, u_tmp++){
+		// for each transfer:
+		// check max len:
+		if (u_tmp->len > param_max_bytes_per_ioreq)
+			goto done;
+		// check access rights
+		if (u_tmp->rx_buf){
+			if (!access_ok(VERIFY_WRITE, (u8 __user*)
+					(uintptr_t) u_tmp->rx_buf, u_tmp->len))
+				goto done;
+		}
+		if (u_tmp->tx_buf){
+			// copy tx_buf to device wp buf:
+			// todo p1: need a semapore here! (but not the interchange one)
+			// we can copy to wp as outside this function no transfer is active
+			// and the other side checks xfer_len which is secured below.
+
+			if (copy_from_user(dev->wp, (const u8 __user *)
+					(uintptr_t) u_tmp->tx_buf, u_tmp->len))
+				goto done;
+		}
+		// ok, now we have the tx-data in the dev->wp.
+
+		// block the other side:
+		if (down_interruptible(&sem_interchange))
+			return -ERESTARTSYS;
+
+		dev->xfer_len = u_tmp->len;
+		dev->xfer_actual = 0;
+		// set start time of xfer:
+		ts = CURRENT_TIME;
+		dev->xfer_start_ns = timespec_to_ns(&ts);
+		// calc finish time of xfer:
+		if (dev->isMaster){
+			delay_len = calctimeforxfer_ns(dev->xfer_len, dev->max_speed_cps);
+			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
+
+			up(&sem_interchange); // give sem before waiting
+			// now wait to simulate blocking io.
+			if (delay_len<10000)
+				ndelay(delay_len);
+			else
+				udelay(delay_len/1000);
+			if (down_interruptible(&sem_interchange))
+				return -ERESTARTSYS;
+
+			/* if there is a slave active, copy data to/from his buffers according
+			 * to the proper start times.
+			 */
+			client = &vspi_devices[1];
+			// assert !isMaster
+			if (client->xfer_len){
+				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
+						client->xfer_len - client->xfer_actual,
+						client->xfer_len);
+
+			}
+
+			printk(KERN_NOTICE "vspi_xfer master %d bytes took %lu ns from %lld to %lld \n",
+					dev->xfer_len,
+					delay_len,
+					dev->xfer_start_ns,
+					dev->xfer_stop_ns);
+
+		}else{
+			// for a slave we send the endtime to starttime + max_span:
+			dev->xfer_stop_ns = dev->xfer_start_ns +
+					NSEC_PER_SEC; // todo p1 start with 1s but change to param later!
+
+			up(&sem_interchange);
+			// now wait for timeout or master signaling us
+			mdelay(4000); // todo p1 fixme!
+			if (down_interruptible(&sem_interchange))
+				return -ERESTARTSYS;
+
+			ts = CURRENT_TIME;
+			delay_len = timespec_to_ns(&ts) - dev->xfer_start_ns;
+
+			printk(KERN_NOTICE "vspi_xfer slave %d/%d bytes took %lu ns from %lld to %lld \n",
+					dev->xfer_actual, dev->xfer_len,
+					delay_len,
+					dev->xfer_start_ns,
+					dev->xfer_stop_ns);
+		}
+
+		// copy any data to rx_buf?
+		// todo p1
+		if (dev->isMaster){
+			// master always succeeds in tx and/or rx:
+			dev->xfer_actual = dev->xfer_len;
+		}else{
+		}
+		total += dev->xfer_actual;
+		dev->xfer_len = 0; // no more transfer active
+		dev->xfer_actual = 0;
+
+		// allow the other thread to access:
+		up(&sem_interchange);
+	}
+	retval = total;
+done:
+	return retval; // return nr of bytes transfered
 }
 
 // read:
 ssize_t vspi_read(struct file *filep, char __user *buf, size_t count, loff_t *f_pos)
 {
-	ssize_t retval = -ENOMEM;
+	struct spi_ioc_transfer xfer;
 	struct vspi_dev *dev = filep->private_data;
 
 	if (count > param_max_bytes_per_ioreq)
 		return -EMSGSIZE;
 
-
-	return retval;
+	// put request in a spi_ioc_transfer struct:
+	memset( &xfer, 0, sizeof(struct spi_ioc_transfer));
+	xfer.rx_buf = (uintptr_t)buf;
+	xfer.len = count;
+	// keep rest at zero. can see later whether more infos are needed at _handletransfers
+	return vspi_handletransfers(dev, &xfer, 1);
 }
 
 // write:
 ssize_t vspi_write(struct file *filep, const char __user *buf, size_t count, loff_t *f_pos)
 {
-	ssize_t retval = -ENOMEM;
+	struct spi_ioc_transfer xfer;
+	struct vspi_dev *dev = filep->private_data;
 
-	if (count > param_max_bytes_per_ioreq)
+	if (count > param_max_bytes_per_ioreq){
+		printk(" vspi_write tried to write %d bytes\n", count);
 		return -EMSGSIZE;
+	}
+	// put request in a spi_ioc_transfer struct:
 
-
-	return retval;
+	memset( &xfer, 0, sizeof(struct spi_ioc_transfer));
+	xfer.tx_buf = (uintptr_t) buf;
+	xfer.len = count;
+	// keep rest at zero for now.
+	return vspi_handletransfers(dev, &xfer, 1);
 }
 
 
@@ -309,7 +441,7 @@ long vspi_ioctl(struct file *filep,
 		retval = __put_user(dev->bits_per_word, (__u8 __user *)arg);
 		break;
 	case SPI_IOC_RD_MAX_SPEED_HZ:
-		retval = __put_user(dev->max_speed_hz, (__u32 __user *)arg);
+		retval = __put_user(dev->max_speed_cps*8, (__u32 __user *)arg);
 		break;
 
 	/* write requests */
@@ -342,7 +474,12 @@ long vspi_ioctl(struct file *filep,
 	case SPI_IOC_WR_MAX_SPEED_HZ:
 		retval = __get_user(tmp, (__u32 __user *)arg);
 		if (0 == retval){
-			dev->max_speed_hz = tmp;
+			if ((tmp/8) <= param_speed_cps)
+				dev->max_speed_cps = (tmp/8);
+			else
+				dev->max_speed_cps = param_speed_cps;
+			printk(KERN_NOTICE "vspi_drv set speed to %dcps (wanted %dHz)\n",
+					dev->max_speed_cps, tmp);
 		}
 		break;
 	default:
@@ -374,7 +511,7 @@ long vspi_ioctl(struct file *filep,
 			retval = -EFAULT;
 			break;
 		}
-		retval = vspi_message(dev, ioc, n_ioc);
+		retval = vspi_handletransfers(dev, ioc, n_ioc);
 		kfree(ioc);
 		break;
 	}

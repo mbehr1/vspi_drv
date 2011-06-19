@@ -22,11 +22,15 @@ struct vspi_dev {
 	int isMaster; // indicated whether this device the SPI master or slave
 	int isOpened; // holds the number of opened clients (restricted to 1)
 	char *rp, *wp; // read and write pointer within each ioctl.
+	s64 xfer_start_ns; // time in ns of transfer start
+	s64 xfer_stop_ns;
+	unsigned xfer_len; // in bytes.
+	unsigned xfer_actual; // how many bytes have been xfered
 	struct semaphore sem;
 	struct cdev cdev;
 
 	// spi parameters:
-	u32			max_speed_hz;
+	u32			max_speed_cps; // we store in cps not hz. convert to *8 at rd/wr
 	u8			chip_select;
 	u8			mode;
 	u8			bits_per_word;
