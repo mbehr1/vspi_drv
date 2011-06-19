@@ -285,6 +285,11 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 		dev->xfer_len = u_tmp->len;
 		dev->xfer_actual = 0;
+		// init read to zero
+		// todo: use param whether not active is zero or 0xff
+		if (dev->rp && dev->xfer_len){
+			memset( dev->rp, 0, dev->xfer_len);
+		}
 		// set start time of xfer:
 		ts = CURRENT_TIME;
 		dev->xfer_start_ns = timespec_to_ns(&ts);
@@ -308,10 +313,19 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			client = &vspi_devices[1];
 			// assert !isMaster
 			if (client->xfer_len){
+				unsigned needed = client->xfer_len - client->xfer_actual;
 				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
-						client->xfer_len - client->xfer_actual,
+						needed,
 						client->xfer_len);
-
+				// copy data:
+				// todo bug p1: check start times and calc offsets:
+				if (client->rp && dev->wp)
+					memcpy( client->rp+client->xfer_actual, dev->wp,
+						min(needed, dev->xfer_len));
+				if (client->wp && dev->rp)
+					memcpy( dev->rp, dev->rp+dev->xfer_actual,
+							min(needed, dev->xfer_len));
+				client->xfer_actual += min(needed, dev->xfer_len);
 			}
 			// wake up any slave
 			wake_up_interruptible(&event_master);
@@ -329,7 +343,8 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
-			wait_event_interruptible_timeout(event_master,(1==0), 4*HZ );
+			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
+					4*HZ ); // fixme other timeout!
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
@@ -351,6 +366,15 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		}else{
 		}
 		total += dev->xfer_actual;
+
+		if (dev->rp && dev->xfer_actual && u_tmp->rx_buf){
+			if (__copy_to_user((u8 __user*)(uintptr_t)u_tmp->rx_buf,
+					dev->rp, dev->xfer_actual)){
+				retval = -EFAULT;
+				up(&sem_interchange);
+				goto done;
+			}
+		}
 		dev->xfer_len = 0; // no more transfer active
 		dev->xfer_actual = 0;
 
