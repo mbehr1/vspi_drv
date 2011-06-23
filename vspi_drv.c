@@ -290,6 +290,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 	struct vspi_dev *client;
 
 	for(n=0, u_tmp=u_xfers; n<n_xfers; n++, u_tmp++){
+		unsigned copied_to_slave=0;
 		// for each transfer:
 		// check max len:
 		if (u_tmp->len > param_max_bytes_per_ioreq)
@@ -375,9 +376,9 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			if (client->xfer_len){
 				unsigned client_start_missed, client_end_missed;
 				unsigned needed = client->xfer_len - client->xfer_actual;
-				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
+				/* printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
-						client->xfer_len);
+						client->xfer_len);*/
 				// copy data:
 				// check start times and calc offsets:
 				/*
@@ -419,8 +420,9 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 					}
 
 					if (client->rp && dev->wp){
+						copied_to_slave = min(needed, dev->xfer_len-client_start_missed);
 						memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
-							min(needed, dev->xfer_len-client_start_missed));
+							copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 					}
@@ -437,7 +439,8 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				wake_up_interruptible(&event_master);
 			}
 
-			printk(KERN_NOTICE "vspi_xfer master %d bytes took %lu ns from %lld to %lld \n",
+			printk(KERN_NOTICE "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
+					copied_to_slave,
 					dev->xfer_len,
 					delay_len,
 					dev->xfer_start_ns,
@@ -457,7 +460,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
 			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
-					(delay_len/NSEC_PER_USEC)*HZ / USEC_PER_SEC );
+					((delay_len/NSEC_PER_USEC)*HZ / USEC_PER_SEC)+1 ); // waiting a bit longer is better than shorter!
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
