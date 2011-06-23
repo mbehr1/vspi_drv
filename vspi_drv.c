@@ -369,7 +369,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			client = &vspi_devices[1];
 			// assert !isMaster
 			if (client->xfer_len){
-				unsigned client_start_missed;
+				unsigned client_start_missed, client_end_missed;
 				unsigned needed = client->xfer_len - client->xfer_actual;
 				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
@@ -382,7 +382,6 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * two checks: 1. check whether slave started later
 				 * 2. check whether slave will end earlier due to timeout
 				 */
-				// todo p1 add check 2
 				if (client->xfer_start_ns > dev->xfer_stop_ns){
 					// missed the end of transfer so do nothing (not even waking up)
 					printk(KERN_NOTICE "vspi slave completely missed master\n");
@@ -395,9 +394,24 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 					}else{
 						client_start_missed=0;
 					}
+
+					if (client->xfer_stop_ns < dev->xfer_stop_ns){
+						// slave will finish earlier due timeout
+						client_end_missed = calc_bytes_transfered(dev->xfer_stop_ns - client->xfer_stop_ns,
+								dev->max_speed_cps);
+						printk(KERN_NOTICE "vspi slave will finish in between mstr xfer (missing %d)\n",
+								client_end_missed);
+					}else
+						client_end_missed = 0;
+
 					if (client_start_missed > min(needed, dev->xfer_len))
 						client_start_missed = min(needed, dev->xfer_len);
 					needed -= client_start_missed;
+
+					if ((client_start_missed + needed + client_end_missed) > dev->xfer_len){
+						needed= dev->xfer_len - (client_start_missed + client_end_missed);
+						printk(KERN_NOTICE "vspi reduced needed to %d\n", needed);
+					}
 
 					if (client->rp && dev->wp){
 						memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
@@ -427,7 +441,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		}else{
 			// for a slave we send the endtime to starttime + max_span:
 			dev->xfer_stop_ns = dev->xfer_start_ns +
-					NSEC_PER_SEC; // todo p1 start with 1s but change to param later!
+					4ull*NSEC_PER_SEC; // todo p1 start with 4s but change to param later!
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
