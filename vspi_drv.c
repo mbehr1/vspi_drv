@@ -256,6 +256,25 @@ static unsigned long calctimeforxfer_ns(unsigned cnt, u32 speed)
 	return cnt*(NSEC_PER_SEC/speed);
 }
 
+/*
+ * calc_bytes_transfered
+ * input:
+ *  time in ns
+ *  speed in CPS (=bytes per sec)
+ * return the number of bytes transfered within the given timeframe and speed
+ */
+
+static unsigned calc_bytes_transfered(s64 time, u32 speed)
+{
+	u64 tmp;
+	if (time<=0)
+		return 0;
+	tmp=(u64)time;
+	tmp*=speed;
+	do_div(tmp, NSEC_PER_SEC);
+	return tmp;
+}
+
 static int vspi_handletransfers(struct vspi_dev *dev,
 		struct spi_ioc_transfer *u_xfers, unsigned n_xfers)
 {
@@ -317,7 +336,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				// now wait to simulate blocking io.
 
 				// we need a interruptible wait here otherwise
-				// no else (slave) can do anything ... ndelay/udelay are non interruptible!
+				// no oneelse (slave) can do anything ... ndelay/udelay are non interruptible!
 				// but schedule_timer is only on timer tick granularity???
 
 				ts = CURRENT_TIME;
@@ -350,19 +369,47 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			client = &vspi_devices[1];
 			// assert !isMaster
 			if (client->xfer_len){
+				unsigned client_start_missed;// , client_end_missed;
 				unsigned needed = client->xfer_len - client->xfer_actual;
 				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
 						client->xfer_len);
 				// copy data:
 				// todo bug p1: check start times and calc offsets:
-				if (client->rp && dev->wp)
-					memcpy( client->rp+client->xfer_actual, dev->wp,
-						min(needed, dev->xfer_len));
-				if (client->wp && dev->rp)
-					memcpy( dev->rp, dev->rp+dev->xfer_actual,
-							min(needed, dev->xfer_len));
-				client->xfer_actual += min(needed, dev->xfer_len);
+				/*
+				 * compare slave [xfer_start xfer_stop] with master [xfer_start xfer_stop]
+				 * interval:
+				 * two checks: 1. check whether slave started later
+				 * 2. check whether slave will end earlier due to timeout
+				 */
+				// todo p1 add check 2
+				if (client->xfer_start_ns > dev->xfer_start_ns){
+					// client missed the start. Let's calc how many bytes:
+					client_start_missed = calc_bytes_transfered(client->xfer_start_ns - dev->xfer_start_ns,
+							dev->max_speed_cps);
+					printk(KERN_NOTICE "vspi slave missed %d bytes transfered\n", client_start_missed);
+				}else{
+					client_start_missed=0;
+				}
+				if (client_start_missed > min(needed, dev->xfer_len))
+					client_start_missed = min(needed, dev->xfer_len);
+				needed -= client_start_missed;
+
+				if (client->rp && dev->wp){
+					memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
+						min(needed, dev->xfer_len-client_start_missed));
+					/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
+							min(needed, dev->xfer_len-client_start_missed)); */
+				}
+				if (client->wp && dev->rp){
+					memcpy( dev->rp+client_start_missed, client->wp+dev->xfer_actual+client_start_missed,
+							min(needed, dev->xfer_len-client_start_missed));
+					/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
+							min(needed, dev->xfer_len-client_start_missed)); */
+
+				}
+				client->xfer_actual += client_start_missed + min(needed, dev->xfer_len);
+				// client_strat_missed bytes were missed = filled with default, the min() were actually copied.
 			}
 			// wake up any slave
 			wake_up_interruptible(&event_master);
@@ -411,6 +458,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				up(&sem_interchange);
 				goto done;
 			}
+			/* printk(KERN_NOTICE "vspi copied %d to userspace rx_buf\n", dev->xfer_actual); */
 		}
 		dev->xfer_len = 0; // no more transfer active
 		dev->xfer_actual = 0;
