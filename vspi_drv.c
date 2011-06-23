@@ -60,6 +60,10 @@ static unsigned long param_max_bytes_per_ioreq = 4*1024; // todo use page_size c
 module_param(param_max_bytes_per_ioreq, ulong, S_IRUGO);
 MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI message");
 
+static unsigned long param_slave_default_delay_us = USEC_PER_SEC; // 1 sec is easier for testing from console
+module_param(param_slave_default_delay_us, ulong, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(param_slave_default_delay_us, "default slave delay/timeout in us.");
+
 
 struct vspi_dev *vspi_devices; // allocated in vspi_drv_init
 
@@ -375,15 +379,16 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 						needed,
 						client->xfer_len);
 				// copy data:
-				// todo bug p1: check start times and calc offsets:
+				// check start times and calc offsets:
 				/*
 				 * compare slave [xfer_start xfer_stop] with master [xfer_start xfer_stop]
 				 * interval:
 				 * two checks: 1. check whether slave started later
 				 * 2. check whether slave will end earlier due to timeout
 				 */
-				if (client->xfer_start_ns > dev->xfer_stop_ns){
-					// missed the end of transfer so do nothing (not even waking up)
+				if ((client->xfer_start_ns > dev->xfer_stop_ns)||
+						(client->xfer_stop_ns < dev->xfer_start_ns)){
+					// missed the transfer completely so do nothing (not even waking up)
 					printk(KERN_NOTICE "vspi slave completely missed master\n");
 				}else{
 					if (client->xfer_start_ns > dev->xfer_start_ns){
@@ -440,13 +445,19 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 		}else{
 			// for a slave we send the endtime to starttime + max_span:
-			dev->xfer_stop_ns = dev->xfer_start_ns +
-					4ull*NSEC_PER_SEC; // todo p1 start with 4s but change to param later!
+			delay_len =((u_tmp->delay_usecs ?
+					u_tmp->delay_usecs : param_slave_default_delay_us)*NSEC_PER_USEC);
+
+			// as we wait with wait_event the delay_len has to be at least 1 timer tick:
+			if (delay_len < (USEC_PER_SEC / HZ))
+				delay_len = USEC_PER_SEC/HZ;
+
+			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
 			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
-					4*HZ ); // fixme other timeout!
+					delay_len*HZ / USEC_PER_SEC );
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
@@ -461,7 +472,6 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		}
 
 		// copy any data to rx_buf?
-		// todo p1
 		if (dev->isMaster){
 			// master always succeeds in tx and/or rx:
 			dev->xfer_actual = dev->xfer_len;
