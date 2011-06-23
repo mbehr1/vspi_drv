@@ -128,7 +128,7 @@ static int __init vspi_init(void)
 	int retval = 0, i;
 	dev_t dev=0;
 
-	printk( KERN_ALERT "vspi_drv_init (c) M. Behr, 2011\n");
+	printk( KERN_ALERT "vspi_drv_init (HZ=%d) (c) M. Behr, 2011\n", HZ);
 
 	init_waitqueue_head(&event_master);
 
@@ -457,14 +457,14 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
 			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
-					delay_len*HZ / NSEC_PER_SEC );
+					(delay_len/NSEC_PER_USEC)*HZ / USEC_PER_SEC );
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
 			ts = CURRENT_TIME;
 			delay_len = timespec_to_ns(&ts) - dev->xfer_start_ns;
 
-			printk(KERN_NOTICE "vspi_xfer slave %d/%d bytes took %lu ns from %lld to %lld \n",
+			printk(KERN_NOTICE "vspi_xfer slave %d/%d bytes took %lu ns from %lld to %lld\n",
 					dev->xfer_actual, dev->xfer_len,
 					delay_len,
 					dev->xfer_start_ns,
