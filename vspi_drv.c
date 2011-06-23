@@ -449,15 +449,15 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 					u_tmp->delay_usecs : param_slave_default_delay_us)*NSEC_PER_USEC);
 
 			// as we wait with wait_event the delay_len has to be at least 1 timer tick:
-			if (delay_len < (USEC_PER_SEC / HZ))
-				delay_len = USEC_PER_SEC/HZ;
+			if (delay_len < (NSEC_PER_SEC / HZ))
+				delay_len = NSEC_PER_SEC/HZ;
 
 			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
 			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
-					delay_len*HZ / USEC_PER_SEC );
+					delay_len*HZ / NSEC_PER_SEC );
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
