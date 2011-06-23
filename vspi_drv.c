@@ -556,4 +556,4 @@ long vspi_ioctl(struct file *filep,
 // todo p3 define license MODULE_LICENSE("proprietary");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Matthias Behr");
-MODULE_DESCRIPTION("Virtual SPI driver with unrealiability features (patents pending)\n");
+MODULE_DESCRIPTION("Virtual SPI driver with unreliability features (patents pending)\n");
