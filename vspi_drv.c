@@ -369,7 +369,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			client = &vspi_devices[1];
 			// assert !isMaster
 			if (client->xfer_len){
-				unsigned client_start_missed;// , client_end_missed;
+				unsigned client_start_missed;
 				unsigned needed = client->xfer_len - client->xfer_actual;
 				printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
@@ -383,36 +383,40 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * 2. check whether slave will end earlier due to timeout
 				 */
 				// todo p1 add check 2
-				if (client->xfer_start_ns > dev->xfer_start_ns){
-					// client missed the start. Let's calc how many bytes:
-					client_start_missed = calc_bytes_transfered(client->xfer_start_ns - dev->xfer_start_ns,
-							dev->max_speed_cps);
-					printk(KERN_NOTICE "vspi slave missed %d bytes transfered\n", client_start_missed);
+				if (client->xfer_start_ns > dev->xfer_stop_ns){
+					// missed the end of transfer so do nothing (not even waking up)
+					printk(KERN_NOTICE "vspi slave completely missed master\n");
 				}else{
-					client_start_missed=0;
-				}
-				if (client_start_missed > min(needed, dev->xfer_len))
-					client_start_missed = min(needed, dev->xfer_len);
-				needed -= client_start_missed;
+					if (client->xfer_start_ns > dev->xfer_start_ns){
+						// client missed the start. Let's calc how many bytes:
+						client_start_missed = calc_bytes_transfered(client->xfer_start_ns - dev->xfer_start_ns,
+								dev->max_speed_cps);
+						printk(KERN_NOTICE "vspi slave missed %d bytes transfered\n", client_start_missed);
+					}else{
+						client_start_missed=0;
+					}
+					if (client_start_missed > min(needed, dev->xfer_len))
+						client_start_missed = min(needed, dev->xfer_len);
+					needed -= client_start_missed;
 
-				if (client->rp && dev->wp){
-					memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
-						min(needed, dev->xfer_len-client_start_missed));
-					/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
-							min(needed, dev->xfer_len-client_start_missed)); */
-				}
-				if (client->wp && dev->rp){
-					memcpy( dev->rp+client_start_missed, client->wp+dev->xfer_actual+client_start_missed,
+					if (client->rp && dev->wp){
+						memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
 							min(needed, dev->xfer_len-client_start_missed));
-					/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
-							min(needed, dev->xfer_len-client_start_missed)); */
+						/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
+								min(needed, dev->xfer_len-client_start_missed)); */
+					}
+					if (client->wp && dev->rp){
+						memcpy( dev->rp+client_start_missed, client->wp+dev->xfer_actual+client_start_missed,
+								min(needed, dev->xfer_len-client_start_missed));
+						/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
+								min(needed, dev->xfer_len-client_start_missed)); */
 
+					}
+					client->xfer_actual += client_start_missed + min(needed, dev->xfer_len);
+					// client_strat_missed bytes were missed = filled with default, the min() were actually copied.
 				}
-				client->xfer_actual += client_start_missed + min(needed, dev->xfer_len);
-				// client_strat_missed bytes were missed = filled with default, the min() were actually copied.
+				wake_up_interruptible(&event_master);
 			}
-			// wake up any slave
-			wake_up_interruptible(&event_master);
 
 			printk(KERN_NOTICE "vspi_xfer master %d bytes took %lu ns from %lld to %lld \n",
 					dev->xfer_len,
