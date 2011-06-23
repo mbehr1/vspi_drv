@@ -308,14 +308,41 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			delay_len = calctimeforxfer_ns(dev->xfer_len, dev->max_speed_cps);
 			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
-			up(&sem_interchange); // give sem before waiting
-			// now wait to simulate blocking io.
-			if (delay_len<10000)
+			if (delay_len<=1000){
+				/* lets wait with sem being kept. The time is too short anyhow. */
 				ndelay(delay_len);
-			else
-				udelay(delay_len/1000);
-			if (down_interruptible(&sem_interchange))
-				return -ERESTARTSYS;
+			}else{
+				s64 toWait;
+				up(&sem_interchange); // give sem before waiting
+				// now wait to simulate blocking io.
+
+				// we need a interruptible wait here otherwise
+				// no else (slave) can do anything ... ndelay/udelay are non interruptible!
+				// but schedule_timer is only on timer tick granularity???
+
+				ts = CURRENT_TIME;
+				toWait = dev->xfer_stop_ns - timespec_to_ns(&ts);
+
+				if (toWait > NSEC_PER_MSEC){
+					do_div(toWait, NSEC_PER_MSEC);
+					msleep_interruptible(toWait);
+					printk(KERN_NOTICE "vspi_drv: msleep for %lld ms\n", toWait);
+				}else{
+					/* less than a ms but more than a us to wait.
+					 * let the schedule see at least whether any other task is available:
+					 * the remaining time will be waited below
+					*/
+					schedule();
+				}
+				// wait for the remaining time in ns granularity:
+				ts = CURRENT_TIME;
+				toWait = dev->xfer_stop_ns - timespec_to_ns(&ts);
+				if (toWait>0)
+					ndelay(toWait);
+				if (down_interruptible(&sem_interchange))
+					return -ERESTARTSYS;
+
+			}
 
 			/* if there is a slave active, copy data to/from his buffers according
 			 * to the proper start times.
