@@ -54,6 +54,8 @@ static unsigned long param_speed_cps = 18000000/8; // module parameter speed in 
 module_param(param_speed_cps, ulong, S_IRUGO); // only readable
 MODULE_PARM_DESC(param_speed_cps, "speed in bytes per second");
 
+static unsigned long param_min_speed_cps = 100000/8; // min 100kHz
+
 static unsigned long param_max_bytes_per_ioreq = 4*1024; // todo use page_size constant
 module_param(param_max_bytes_per_ioreq, ulong, S_IRUGO);
 MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI message");
@@ -513,10 +515,12 @@ long vspi_ioctl(struct file *filep,
 	case SPI_IOC_WR_MAX_SPEED_HZ:
 		retval = __get_user(tmp, (__u32 __user *)arg);
 		if (0 == retval){
-			if ((tmp/8) <= param_speed_cps)
-				dev->max_speed_cps = (tmp/8);
-			else
-				dev->max_speed_cps = param_speed_cps;
+			if ((tmp/8) >= param_min_speed_cps ){
+				if ((tmp/8) <= param_speed_cps)
+					dev->max_speed_cps = (tmp/8);
+				else
+					dev->max_speed_cps = param_speed_cps;
+			}
 			printk(KERN_NOTICE "vspi_drv set speed to %dcps (wanted %dHz)\n",
 					dev->max_speed_cps, tmp);
 		}
