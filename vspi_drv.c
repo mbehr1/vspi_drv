@@ -31,6 +31,14 @@
 #include <linux/time.h>
 #include "vspi_drv.h"
 
+/*
+ * to-do list: (global, for features, enhancements,...
+ * todo p1: implement CS handling for end of transfer at slave side
+ * todo p2: implement param_ber for bit error rate simulation
+ * todo p2: implement param for idle value on mosi line (for master reading without slave sending)
+ *
+ */
+
 // module parameter:
 int param_major = VSPI_MAJOR;
 module_param(param_major, int, S_IRUGO);
