@@ -29,14 +29,15 @@
 #include <linux/sched.h> // for TASK_INTERRUPTIBLE
 #include <linux/wait.h> // wait queues
 #include <linux/time.h>
+#include <linux/random.h>
 #include "vspi_drv.h"
 
 /*
  * to-do list: (global, for features, enhancements,...
  * todo p1: implement CS handling for end of transfer at slave side
- * todo p2: implement param_ber for bit error rate simulation
  * todo p2: implement param for idle value on mosi line (for master reading without slave sending)
- *
+ * todo p3: check maximum values for .delay_us (16bit) vs. our default value and int overflow handling
+ * todo p2: add statistic infos (e.g. bytes transferred, timeouts, bit errors,...)
  */
 
 // module parameter:
@@ -46,9 +47,9 @@ module_param(param_major, int, S_IRUGO);
 int param_minor = 0;
 module_param(param_minor, int, S_IRUGO);
 
-int param_ber = 0; // module parameter bit error rate: 0 = none
-module_param(param_ber, int, S_IRUGO|S_IWUSR); // readable by all users in sysfs (/sys/module/vspi_drv/parameters/), changeable only by root
-MODULE_PARM_DESC(param_ber, "bit error rate for both directions");
+unsigned long param_ber = 0; // module parameter bit error rate: 0 = none,
+module_param(param_ber, ulong, S_IRUGO|S_IWUSR); // readable by all users in sysfs (/sys/module/vspi_drv/parameters/), changeable only by root
+MODULE_PARM_DESC(param_ber, "bit error rate for both devices in read direction (amount of corrupt bytes in 2^32)");
 
 static unsigned long param_speed_cps = 18000000/8; // module parameter speed in cps.
 module_param(param_speed_cps, ulong, S_IRUGO); // only readable
@@ -483,6 +484,29 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		total += dev->xfer_actual;
 
 		if (dev->rp && dev->xfer_actual && u_tmp->rx_buf){
+			/* add bit error rate before copying to user space as a simulation
+			 * of line/reception noise.
+			 * ber is expressed as number of corrupt bytes in 2^32
+			 * we do the following approach: (targetting low bit error rates)
+			 * for each transfer we change at max. 1 byte by random
+			 * (could be improved by e.g. each 256 bytes)
+			 */
+			if (param_ber>0){
+				unsigned long random_number[2]; unsigned long ber_cor;
+				ber_cor = param_ber * dev->xfer_actual;
+				get_random_bytes(random_number, sizeof(random_number));
+				if (random_number[0] <= ber_cor){
+					u16 *pos;
+					u8 *val;
+					pos = (u16*)&random_number[1];
+					*pos %= dev->xfer_actual;
+					val = (u8*)(pos+1);
+					printk(KERN_NOTICE "vspi ber changed %d/%d to %d\n", *pos, dev->xfer_actual, *val);
+					// ok, let's change random byte to random value:
+					dev->rp[*pos] = *val;
+				}
+			}
+
 			if (__copy_to_user((u8 __user*)(uintptr_t)u_tmp->rx_buf,
 					dev->rp, dev->xfer_actual)){
 				retval = -EFAULT;

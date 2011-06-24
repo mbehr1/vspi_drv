@@ -39,7 +39,7 @@ struct vspi_dev {
 
 // the configurable parameters
 extern int param_major; // major number for char devices
-extern int param_ber; // Bit error rate
+extern unsigned long param_ber; // Bit error rate
 
 // prototypes for shared functions:
 int vspi_open(struct inode *inode, struct file *filep);
