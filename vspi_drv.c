@@ -351,7 +351,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				if (toWait > NSEC_PER_MSEC){
 					do_div(toWait, NSEC_PER_MSEC);
 					msleep_interruptible(toWait);
-					printk(KERN_NOTICE "vspi_drv: msleep for %lld ms\n", toWait);
+					/* printk(KERN_NOTICE "vspi_drv: msleep for %lld ms\n", toWait); */
 				}else{
 					/* less than a ms but more than a us to wait.
 					 * let the schedule see at least whether any other task is available:
@@ -420,22 +420,22 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 						printk(KERN_NOTICE "vspi reduced needed to %d\n", needed);
 					}
 
+					copied_to_slave = min(needed, dev->xfer_len-client_start_missed);
 					if (client->rp && dev->wp){
-						copied_to_slave = min(needed, dev->xfer_len-client_start_missed);
-						memcpy( client->rp+client->xfer_actual+client_start_missed, dev->wp+client_start_missed,
+						memcpy( client->rp+client->xfer_actual, dev->wp+client_start_missed,
 							copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 					}
 					if (client->wp && dev->rp){
-						memcpy( dev->rp+client_start_missed, client->wp+dev->xfer_actual+client_start_missed,
-								min(needed, dev->xfer_len-client_start_missed));
+						memcpy( dev->rp+client_start_missed, client->wp+client->xfer_actual,
+								copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 
 					}
-					client->xfer_actual += client_start_missed + min(needed, dev->xfer_len);
-					// client_strat_missed bytes were missed = filled with default, the min() were actually copied.
+					client->xfer_actual += copied_to_slave;
+					// the missed bytes are not put in the buffer. They are lost. Slave will wait for more or timeout or CS change
 				}
 				wake_up_interruptible(&event_master);
 			}
