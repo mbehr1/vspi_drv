@@ -461,7 +461,8 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 			}
 
-			printk(KERN_NOTICE "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
+			if (copied_to_slave != dev->xfer_len)
+				printk(KERN_NOTICE "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
 					copied_to_slave,
 					dev->xfer_len,
 					delay_len,
@@ -498,8 +499,9 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			ts = CURRENT_TIME;
 			delay_len = timespec_to_ns(&ts) - dev->xfer_start_ns;
 
-			printk(KERN_NOTICE "vspi_xfer slave %d/%d bytes took %lu ns from %lld to %lld\n",
-					dev->xfer_actual, dev->xfer_len,
+			if (dev->xfer_actual != dev->xfer_len)
+				printk(KERN_NOTICE "vspi_xfer slave %d/%d (%d) bytes took %lu ns from %lld to %lld\n",
+					dev->xfer_actual, dev->xfer_len, dev->cs_latched_high,
 					delay_len,
 					dev->xfer_start_ns,
 					dev->xfer_stop_ns);
