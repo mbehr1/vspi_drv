@@ -288,7 +288,10 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 	struct spi_ioc_transfer *u_tmp;
 	unsigned long delay_len;
 	struct timespec ts;
-	struct vspi_dev *client;
+	struct vspi_dev *slave;
+
+	slave = &vspi_devices[1];
+	// assert !isMaster
 
 	for(n=0, u_tmp=u_xfers; n<n_xfers; n++, u_tmp++){
 		unsigned copied_to_slave=0;
@@ -372,11 +375,10 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			/* if there is a slave active, copy data to/from his buffers according
 			 * to the proper start times.
 			 */
-			client = &vspi_devices[1];
-			// assert !isMaster
-			if (client->xfer_len){
+
+			if (slave->xfer_len){
 				unsigned client_start_missed, client_end_missed;
-				unsigned needed = client->xfer_len - client->xfer_actual;
+				unsigned needed = slave->xfer_len - slave->xfer_actual;
 				/* printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
 						client->xfer_len);*/
@@ -388,23 +390,23 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * two checks: 1. check whether slave started later
 				 * 2. check whether slave will end earlier due to timeout
 				 */
-				if ((client->xfer_start_ns > dev->xfer_stop_ns)||
-						(client->xfer_stop_ns < dev->xfer_start_ns)){
+				if ((slave->xfer_start_ns > dev->xfer_stop_ns)||
+						(slave->xfer_stop_ns < dev->xfer_start_ns)){
 					// missed the transfer completely so do nothing (not even waking up)
 					printk(KERN_NOTICE "vspi slave completely missed master\n");
 				}else{
-					if (client->xfer_start_ns > dev->xfer_start_ns){
+					if (slave->xfer_start_ns > dev->xfer_start_ns){
 						// client missed the start. Let's calc how many bytes:
-						client_start_missed = calc_bytes_transfered(client->xfer_start_ns - dev->xfer_start_ns,
+						client_start_missed = calc_bytes_transfered(slave->xfer_start_ns - dev->xfer_start_ns,
 								dev->max_speed_cps);
 						printk(KERN_NOTICE "vspi slave missed %d bytes transfered\n", client_start_missed);
 					}else{
 						client_start_missed=0;
 					}
 
-					if (client->xfer_stop_ns < dev->xfer_stop_ns){
+					if (slave->xfer_stop_ns < dev->xfer_stop_ns){
 						// slave will finish earlier due timeout
-						client_end_missed = calc_bytes_transfered(dev->xfer_stop_ns - client->xfer_stop_ns,
+						client_end_missed = calc_bytes_transfered(dev->xfer_stop_ns - slave->xfer_stop_ns,
 								dev->max_speed_cps);
 						printk(KERN_NOTICE "vspi slave will finish in between mstr xfer (missing %d)\n",
 								client_end_missed);
@@ -421,23 +423,42 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 					}
 
 					copied_to_slave = min(needed, dev->xfer_len-client_start_missed);
-					if (client->rp && dev->wp){
-						memcpy( client->rp+client->xfer_actual, dev->wp+client_start_missed,
+					if (slave->rp && dev->wp){
+						memcpy( slave->rp+slave->xfer_actual, dev->wp+client_start_missed,
 							copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 					}
-					if (client->wp && dev->rp){
-						memcpy( dev->rp+client_start_missed, client->wp+client->xfer_actual,
+					if (slave->wp && dev->rp){
+						memcpy( dev->rp+client_start_missed, slave->wp+slave->xfer_actual,
 								copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 
 					}
-					client->xfer_actual += copied_to_slave;
+					slave->xfer_actual += copied_to_slave;
 					// the missed bytes are not put in the buffer. They are lost. Slave will wait for more or timeout or CS change
 				}
 				wake_up_interruptible(&event_master);
+				/*
+				 * delay_usecs handling here for master:
+				 * simply delay ;-)
+				 */
+				if (u_tmp->delay_usecs){
+					printk(KERN_NOTICE "vspi master udelay %dus\n", u_tmp->delay_usecs);
+					udelay( u_tmp->delay_usecs);
+				}
+				/*
+				 * cs handling here:
+				 * for master:
+				 * if cs_change is set: set cs to high here (and back to low at start of loop)
+				 * then wake up slave again
+				 */
+				if (u_tmp->cs_change){
+					slave->cs_latched_high++;
+					wake_up_interruptible(&event_master);
+				}
+
 			}
 
 			printk(KERN_NOTICE "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
@@ -458,9 +479,18 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
+			/*
+			 * cs handling for a slave:
+			 * if cs_change set, wake up on cs going high (not at being high)
+			 *
+			 */
+			if (u_tmp->cs_change)
+				dev->cs_latched_high = 0; // reset flag here
+
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
-			wait_event_interruptible_timeout(event_master,(dev->xfer_actual>=dev->xfer_len),
+			wait_event_interruptible_timeout(event_master,
+					(dev->xfer_actual>=dev->xfer_len) ||(u_tmp->cs_change && dev->cs_latched_high),
 					((delay_len/NSEC_PER_USEC)*HZ / USEC_PER_SEC)+1 ); // waiting a bit longer is better than shorter!
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
@@ -521,6 +551,20 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		// allow the other thread to access:
 		up(&sem_interchange);
 	}
+	/*
+	 * cs handling part 2:
+	 * for master set cs to high here (if not already set)
+	 * this is needed as single transactions do this only when cs_change is set to 0
+	 */
+	if (dev->isMaster){
+		// we do this without the semaphore being held, as the event is used for signalling as well and
+		// it's just the master who increases the value (and the remaining race cond can happen with real hw as well
+		if (!slave->cs_latched_high){
+			slave->cs_latched_high++;
+			wake_up_interruptible(&event_master);
+		}
+	}
+
 	retval = total;
 done:
 	return retval; // return nr of bytes transfered

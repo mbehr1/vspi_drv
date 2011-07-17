@@ -26,6 +26,7 @@ struct vspi_dev {
 	s64 xfer_stop_ns;
 	unsigned xfer_len; // in bytes.
 	unsigned xfer_actual; // how many bytes have been xfered
+	int cs_latched_high; // for slave: CS line went high (just the latch not the CS status)
 	struct semaphore sem;
 	struct cdev cdev;
 
