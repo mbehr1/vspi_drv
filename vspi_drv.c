@@ -34,7 +34,6 @@
 
 /*
  * to-do list: (global, for features, enhancements,...
- * todo p1: implement CS handling for end of transfer at slave side
  * todo p2: implement param for idle value on mosi line (for master reading without slave sending)
  * todo p3: check maximum values for .delay_us (16bit) vs. our default value and int overflow handling
  * todo p2: add statistic infos (e.g. bytes transferred, timeouts, bit errors,...)
