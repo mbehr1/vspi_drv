@@ -56,7 +56,7 @@ MODULE_PARM_DESC(param_speed_cps, "speed in bytes per second");
 
 static unsigned long param_min_speed_cps = 100000/8; // min 100kHz
 
-static unsigned long param_max_bytes_per_ioreq = 4*1024; // todo use page_size constant
+static unsigned long param_max_bytes_per_ioreq = 16*1024; // todo use page_size constant
 module_param(param_max_bytes_per_ioreq, ulong, S_IRUGO);
 MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI message");
 
