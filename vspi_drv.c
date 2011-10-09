@@ -170,6 +170,55 @@ static int vspi_spi_setup(struct spi_device *spi)
 	return 0;
 }
 
+static int vspi_handletransfers(struct vspi_dev *dev,
+		struct spi_ioc_transfer *u_xfers, unsigned n_xfers);
+
+static int vspi_spi_transfer(struct spi_device *spi, struct spi_message *m)
+{
+	struct vspi_dev *dev;
+	struct spi_transfer *xfer;
+	int ret;
+	// printk(KERN_WARNING "vspi_spi_transfer called\n");
+	dev = spi_master_get_devdata(spi->master);
+
+	/// @todo we need a semaphore here! (as we change dev->rp/wp)
+
+	// we ignore transfers if the device is (or has) already in use by the char device interface
+	if (dev->rp || dev->wp) return -EFAULT;
+
+	// now loop over the spi_transfer msgs:
+	list_for_each_entry(xfer, &m->transfers, transfer_list){
+		struct spi_ioc_transfer ioc;
+		ioc.tx_buf = 0;
+		ioc.rx_buf = 0;
+		ioc.len = xfer->len;
+		dev->wp = (char*) (xfer->tx_buf); // we need that ptr here as it's already in kernel space
+		dev->rp = (char*) (xfer->rx_buf);
+		ioc.speed_hz = xfer->speed_hz;
+		ioc.bits_per_word = xfer->bits_per_word;
+		ioc.cs_change = xfer->cs_change;
+		ioc.delay_usecs = xfer->delay_usecs;
+		ret = vspi_handletransfers(dev, &ioc, 1);
+
+		dev->rp = 0;
+		dev->wp = 0;
+		if (ret>=0){
+			m->actual_length += ret;
+		}else
+			return ret; // even though we might have transferred sthg?
+	}
+	// signal completion to prevent the caller from waiting endless.
+	if (m->complete)
+		m->complete(m->context);
+	return 0;
+}
+
+static void vspi_spi_cleanup(struct spi_device *spi)
+{
+	printk(KERN_WARNING "vspi_spi_cleanup called\n");
+
+}
+
 static int __devinit vspi_probe(struct platform_device *pdev, struct spi_board_info *chip, int isMaster)
 {
 	int ret;
@@ -185,6 +234,8 @@ static int __devinit vspi_probe(struct platform_device *pdev, struct spi_board_i
 	master->num_chipselect = 1;
 	master->mode_bits = SPI_CS_HIGH;
 	master->setup = vspi_spi_setup;
+	master->transfer = vspi_spi_transfer;
+	master->cleanup = vspi_spi_cleanup;
 
 	c = spi_master_get_devdata(master);
 	if (!isMaster)
@@ -277,9 +328,11 @@ static int __init vspi_init(void)
 //	printk(KERN_WARNING "vspi_drv: platform_driver_probe returned %d\n", retval);
 
 	return 0; // 0 = success,
+/*
 fail:
 	vspi_exit();
 	return retval;
+	*/
 }
 
 
