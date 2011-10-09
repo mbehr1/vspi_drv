@@ -31,6 +31,8 @@ struct vspi_dev {
 	struct cdev cdev;
 
 	// spi parameters:
+	struct spi_master *master;
+	struct spi_device *device;
 	u32			max_speed_cps; // we store in cps not hz. convert to *8 at rd/wr
 	u8			chip_select;
 	u8			mode;

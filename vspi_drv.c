@@ -24,12 +24,14 @@
 #include <linux/fcntl.h>
 #include <linux/cdev.h>
 #include <linux/semaphore.h>
+#include <linux/spi/spi.h>
 #include <linux/spi/spidev.h> // for spi specific ioctl
 #include <asm/uaccess.h> // for access_ok
 #include <linux/sched.h> // for TASK_INTERRUPTIBLE
 #include <linux/wait.h> // wait queues
 #include <linux/time.h>
 #include <linux/random.h>
+#include <linux/platform_device.h>
 #include "vspi_drv.h"
 
 /*
@@ -65,7 +67,7 @@ module_param(param_slave_default_delay_us, ulong, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(param_slave_default_delay_us, "default slave delay/timeout in us.");
 
 
-struct vspi_dev *vspi_devices; // allocated in vspi_drv_init
+struct vspi_dev *vspi_slave; // pointing to the slave dev.
 
 DEFINE_SEMAPHORE(sem_interchange);
 //DECLARE_WAITQUEUE_HEAD(event_master);
@@ -84,6 +86,42 @@ struct file_operations vspi_fops = {
 		| SPI_LSB_FIRST | SPI_3WIRE | SPI_LOOP \
 		| SPI_NO_CS | SPI_READY)
 
+
+static struct platform_device vspi_spi0_device = {
+		.name = "vspi-spi_master",
+		.id = -1, // bus number
+};
+
+static struct platform_device vspi_spi1_device = {
+		.name = "vspi-spi_slave",
+		.id = -2, // bus number
+};
+
+
+static struct platform_device *vspi_platform_devices[] = {
+		&vspi_spi0_device,
+		&vspi_spi1_device,
+};
+
+
+static struct spi_board_info vspi_board_info[] __initdata = {
+		{
+			.modalias = "vspi_master",
+			.max_speed_hz = 50000000,
+			.bus_num = 0,
+			.chip_select = 0,
+		},
+		{
+			.modalias = "vspi_slave",
+			.max_speed_hz = 50000000,
+			.bus_num = 1,
+			.chip_select = 0,
+		},
+
+};
+
+
+
 // exit function on module unload:
 // used from _init as well in case of errors!
 
@@ -94,20 +132,24 @@ static void vspi_exit(void)
 	printk( KERN_ALERT "vspi_exit\n");
 
 	// get rid of our devices:
-	if (vspi_devices){
-		for(i=0; i<VSPI_NR_DEVS; i++){
-			cdev_del(&vspi_devices[i].cdev);
-			// we don't rely on release being called. So check to free buffers here again:
-			if (vspi_devices[i].rp)
-				kfree(vspi_devices[i].rp);
-			if (vspi_devices[i].wp)
-				kfree(vspi_devices[i].wp);
-		}
-		kfree(vspi_devices);
-		vspi_devices=0;
-	}
+	// unregister master:
+	// unregister platform devices
+	for (i=0; i<ARRAY_SIZE(vspi_platform_devices);i++){
+		struct vspi_dev *c = platform_get_drvdata(vspi_platform_devices[i]);
+		cdev_del(&c->cdev);
+		// we don't rely on release being called. So check to free buffers here again:
+		if (c->rp)
+			kfree(c->rp);
+		if (c->wp)
+			kfree(c->wp);
 
+		spi_unregister_device(c->device);
+		spi_unregister_master(c->master);
+		/// @todo bug p1: do we have to free the drvdata???
+		platform_device_unregister(vspi_platform_devices[i]);
+	}
 	unregister_chrdev_region( devno, VSPI_NR_DEVS);
+
 }
 
 // setup the char_dev structure for these devices:
@@ -122,10 +164,77 @@ static void vspi_setup_cdev(struct vspi_dev *dev, int index)
 		printk(KERN_NOTICE "Error %d adding vspi_drv%d", err, index);
 }
 
+static int vspi_spi_setup(struct spi_device *spi)
+{
+	printk(KERN_WARNING"vspi_spi_setup called\n");
+	return 0;
+}
+
+static int __devinit vspi_probe(struct platform_device *pdev, struct spi_board_info *chip, int isMaster)
+{
+	int ret;
+	struct spi_master *master;
+	struct vspi_dev *c;
+
+	master = spi_alloc_master( &pdev->dev, sizeof *c);
+	if (!master)
+		return -ENODEV;
+
+	/* setup master state */
+	master->bus_num = pdev->id;
+	master->num_chipselect = 1;
+	master->mode_bits = SPI_CS_HIGH;
+	master->setup = vspi_spi_setup;
+
+	c = spi_master_get_devdata(master);
+	if (!isMaster)
+		vspi_slave = c;
+
+	c->master = master;
+	c->isMaster = isMaster;
+	sema_init(&c->sem, 1); // 1 = count
+	vspi_setup_cdev(c, isMaster ? 0 : 1); ///@todo currently only for two devices!
+	c->max_speed_cps = param_speed_cps; ///@todo setup from board info?
+	// rp and wp will be allocated in open
+	///@todo what happens if transfer is used (so not char but device interface?)
+
+
+	platform_set_drvdata(pdev, c);
+
+
+	ret = spi_register_master(master);
+	printk(KERN_WARNING "vspi_probe spi_register_master returned %d\n", ret);
+
+	c->device = spi_new_device(master, chip);
+	return ret;
+}
+
+/*
+static int __devexit vspi_spi_remove(struct platform_device *dev)
+{
+	printk(KERN_WARNING "vspi_spi_remove called\n");
+	platform_set_drvdata(dev, NULL);
+	/// @todo understand this function and fully implement!
+	return 0;
+}
+
+static struct platform_driver vspi_driver = {
+	.driver = {
+		.name =		"vspi_master_slave",
+		.owner =	THIS_MODULE,
+	},
+	.remove =	__devexit_p(vspi_spi_remove),
+#ifdef not_def_CONFIG_PM
+	.suspend =	vspi_suspend,
+	.resume  =	vspi_resume,
+#endif
+};
+*/
+
 // init function on module load:
 static int __init vspi_init(void)
 {
-	int retval = 0, i;
+	int retval = 0;
 	dev_t dev=0;
 
 	printk( KERN_ALERT "vspi_drv_init (HZ=%d) (c) M. Behr, 2011\n", HZ);
@@ -145,21 +254,27 @@ static int __init vspi_init(void)
 	}
 
 	// allocate the devices. We could have them static as well, as we don't change the number at load time
+/*
 	vspi_devices = kmalloc( VSPI_NR_DEVS * sizeof( struct vspi_dev), GFP_KERNEL);
 	if (!vspi_devices){
 		retval = -ENOMEM;
 		goto fail;
 	}
 	memset(vspi_devices, 0, VSPI_NR_DEVS * sizeof(struct vspi_dev));
+*/
 
-	// init each device:
-	for (i=0; i< VSPI_NR_DEVS; i++){
-		vspi_devices[i].isMaster = ((i==0) ? 1 : 0); // first one is master
-		sema_init(&vspi_devices[i].sem, 1); // 1 = count
-		vspi_setup_cdev(&vspi_devices[i], i);
-		vspi_devices[i].max_speed_cps = param_speed_cps;
-		// rp and wp will be allocated in open
-	}
+	/*
+	 * we register here our own board info to have probe working
+	 * (this can definetly be done differently but I didn't figure out yet ;-)
+	 */
+	platform_add_devices(vspi_platform_devices, ARRAY_SIZE(vspi_platform_devices));
+	vspi_probe(vspi_platform_devices[0], &vspi_board_info[0], 1);
+	vspi_probe(vspi_platform_devices[1], &vspi_board_info[1], 0);
+// not avail in modules	spi_register_board_info(vspi_board_info, ARRAY_SIZE(vspi_board_info));
+//	spi_new_device()
+
+//	retval = platform_driver_probe(&vspi_driver, vspi_probe);
+//	printk(KERN_WARNING "vspi_drv: platform_driver_probe returned %d\n", retval);
 
 	return 0; // 0 = success,
 fail:
@@ -289,7 +404,7 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 	struct timespec ts;
 	struct vspi_dev *slave;
 
-	slave = &vspi_devices[1];
+	slave = vspi_slave;
 	// assert !isMaster
 
 	for(n=0, u_tmp=u_xfers; n<n_xfers; n++, u_tmp++){
