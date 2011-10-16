@@ -32,6 +32,7 @@
 #include <linux/time.h>
 #include <linux/random.h>
 #include <linux/platform_device.h>
+#include <linux/delay.h>
 #include "vspi_drv.h"
 
 /*
