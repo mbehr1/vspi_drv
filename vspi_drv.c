@@ -50,23 +50,32 @@ int param_minor = 0;
 module_param(param_minor, int, S_IRUGO);
 
 unsigned long param_ber = 0; // module parameter bit error rate: 0 = none,
-module_param(param_ber, ulong, S_IRUGO|S_IWUSR); // readable by all users in sysfs (/sys/module/vspi_drv/parameters/), changeable only by root
-MODULE_PARM_DESC(param_ber, "bit error rate for both devices in read direction (amount of corrupt bytes in 2^32)");
+module_param(
+	param_ber, ulong,
+	S_IRUGO |
+		S_IWUSR); // readable by all users in sysfs (/sys/module/vspi_drv/parameters/), changeable only by root
+MODULE_PARM_DESC(
+	param_ber,
+	"bit error rate for both devices in read direction (amount of corrupt bytes in 2^32)");
 
-static unsigned long param_speed_cps = 18000000/8; // module parameter speed in cps.
+static unsigned long param_speed_cps =
+	18000000 / 8; // module parameter speed in cps.
 module_param(param_speed_cps, ulong, S_IRUGO); // only readable
 MODULE_PARM_DESC(param_speed_cps, "speed in bytes per second");
 
-static unsigned long param_min_speed_cps = 100000/8; // min 100kHz
+static unsigned long param_min_speed_cps = 100000 / 8; // min 100kHz
 
-static unsigned long param_max_bytes_per_ioreq = 16*1024; // todo use page_size constant
+static unsigned long param_max_bytes_per_ioreq =
+	16 * 1024; // todo use page_size constant
 module_param(param_max_bytes_per_ioreq, ulong, S_IRUGO);
-MODULE_PARM_DESC(param_max_bytes_per_ioreq, "data bytes in biggest supported SPI message");
+MODULE_PARM_DESC(param_max_bytes_per_ioreq,
+		 "data bytes in biggest supported SPI message");
 
-static unsigned long param_slave_default_delay_us = USEC_PER_SEC; // 1 sec is easier for testing from console
-module_param(param_slave_default_delay_us, ulong, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(param_slave_default_delay_us, "default slave delay/timeout in us.");
-
+static unsigned long param_slave_default_delay_us =
+	USEC_PER_SEC; // 1 sec is easier for testing from console
+module_param(param_slave_default_delay_us, ulong, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(param_slave_default_delay_us,
+		 "default slave delay/timeout in us.");
 
 struct vspi_dev *vspi_slave; // pointing to the slave dev.
 
@@ -74,54 +83,47 @@ DEFINE_SEMAPHORE(sem_interchange);
 //DECLARE_WAITQUEUE_HEAD(event_master);
 wait_queue_head_t event_master;
 
-struct file_operations vspi_fops = {
-		.owner = THIS_MODULE,
-		.read = vspi_read,
-		.write = vspi_write,
-		.unlocked_ioctl = vspi_ioctl,
-		.open = vspi_open,
-		.release = vspi_release
-};
+struct file_operations vspi_fops = { .owner = THIS_MODULE,
+				     .read = vspi_read,
+				     .write = vspi_write,
+				     .unlocked_ioctl = vspi_ioctl,
+				     .open = vspi_open,
+				     .release = vspi_release };
 
-#define SPI_MODE_MASK        (SPI_CPHA | SPI_CPOL | SPI_CS_HIGH \
-		| SPI_LSB_FIRST | SPI_3WIRE | SPI_LOOP \
-		| SPI_NO_CS | SPI_READY)
-
+#define SPI_MODE_MASK                                                          \
+	(SPI_CPHA | SPI_CPOL | SPI_CS_HIGH | SPI_LSB_FIRST | SPI_3WIRE |       \
+	 SPI_LOOP | SPI_NO_CS | SPI_READY)
 
 static struct platform_device vspi_spi0_device = {
-		.name = "vspi-spi_master",
-		.id = -1, // bus number
+	.name = "vspi-spi_master",
+	.id = -1, // bus number
 };
 
 static struct platform_device vspi_spi1_device = {
-		.name = "vspi-spi_slave",
-		.id = -2, // bus number
+	.name = "vspi-spi_slave",
+	.id = -2, // bus number
 };
-
 
 static struct platform_device *vspi_platform_devices[] = {
-		&vspi_spi0_device,
-		&vspi_spi1_device,
+	&vspi_spi0_device,
+	&vspi_spi1_device,
 };
-
 
 static struct spi_board_info vspi_board_info[] __initdata = {
-		{
-			.modalias = "vspi_master",
-			.max_speed_hz = 50000000,
-			.bus_num = 0,
-			.chip_select = 0,
-		},
-		{
-			.modalias = "vspi_slave",
-			.max_speed_hz = 50000000,
-			.bus_num = 1,
-			.chip_select = 0,
-		},
+	{
+		.modalias = "vspi_master",
+		.max_speed_hz = 50000000,
+		.bus_num = 0,
+		.chip_select = 0,
+	},
+	{
+		.modalias = "vspi_slave",
+		.max_speed_hz = 50000000,
+		.bus_num = 1,
+		.chip_select = 0,
+	},
 
 };
-
-
 
 // exit function on module unload:
 // used from _init as well in case of errors!
@@ -130,13 +132,14 @@ static void vspi_exit(void)
 {
 	int i;
 	dev_t devno = MKDEV(param_major, param_minor);
-	printk( KERN_ALERT "vspi_exit\n");
+	printk(KERN_ALERT "vspi_exit\n");
 
 	// get rid of our devices:
 	// unregister master:
 	// unregister platform devices
-	for (i=0; i<ARRAY_SIZE(vspi_platform_devices);i++){
-		struct vspi_dev *c = platform_get_drvdata(vspi_platform_devices[i]);
+	for (i = 0; i < ARRAY_SIZE(vspi_platform_devices); i++) {
+		struct vspi_dev *c =
+			platform_get_drvdata(vspi_platform_devices[i]);
 		cdev_del(&c->cdev);
 		// we don't rely on release being called. So check to free buffers here again:
 		if (c->rp)
@@ -149,8 +152,7 @@ static void vspi_exit(void)
 		/// @todo bug p1: do we have to free the drvdata???
 		platform_device_unregister(vspi_platform_devices[i]);
 	}
-	unregister_chrdev_region( devno, VSPI_NR_DEVS);
-
+	unregister_chrdev_region(devno, VSPI_NR_DEVS);
 }
 
 // setup the char_dev structure for these devices:
@@ -167,12 +169,13 @@ static void vspi_setup_cdev(struct vspi_dev *dev, int index)
 
 static int vspi_spi_setup(struct spi_device *spi)
 {
-	printk(KERN_WARNING"vspi_spi_setup called\n");
+	printk(KERN_WARNING "vspi_spi_setup called\n");
 	return 0;
 }
 
 static int vspi_handletransfers(struct vspi_dev *dev,
-		struct spi_ioc_transfer *u_xfers, unsigned n_xfers);
+				struct spi_ioc_transfer *u_xfers,
+				unsigned n_xfers);
 
 static int vspi_spi_transfer(struct spi_device *spi, struct spi_message *m)
 {
@@ -185,16 +188,18 @@ static int vspi_spi_transfer(struct spi_device *spi, struct spi_message *m)
 	/// @todo we need a semaphore here! (as we change dev->rp/wp)
 
 	// we ignore transfers if the device is (or has) already in use by the char device interface
-	if (dev->rp || dev->wp) return -EFAULT;
+	if (dev->rp || dev->wp)
+		return -EFAULT;
 
 	// now loop over the spi_transfer msgs:
-	list_for_each_entry(xfer, &m->transfers, transfer_list){
+	list_for_each_entry (xfer, &m->transfers, transfer_list) {
 		struct spi_ioc_transfer ioc;
 		ioc.tx_buf = 0;
 		ioc.rx_buf = 0;
 		ioc.len = xfer->len;
-		dev->wp = (char*) (xfer->tx_buf); // we need that ptr here as it's already in kernel space
-		dev->rp = (char*) (xfer->rx_buf);
+		dev->wp =
+			(char *)(xfer->tx_buf); // we need that ptr here as it's already in kernel space
+		dev->rp = (char *)(xfer->rx_buf);
 		ioc.speed_hz = xfer->speed_hz;
 		ioc.bits_per_word = xfer->bits_per_word;
 		ioc.cs_change = xfer->cs_change;
@@ -203,9 +208,9 @@ static int vspi_spi_transfer(struct spi_device *spi, struct spi_message *m)
 
 		dev->rp = 0;
 		dev->wp = 0;
-		if (ret>=0){
+		if (ret >= 0) {
 			m->actual_length += ret;
-		}else
+		} else
 			return ret; // even though we might have transferred sthg?
 	}
 	// signal completion to prevent the caller from waiting endless.
@@ -217,16 +222,16 @@ static int vspi_spi_transfer(struct spi_device *spi, struct spi_message *m)
 static void vspi_spi_cleanup(struct spi_device *spi)
 {
 	printk(KERN_WARNING "vspi_spi_cleanup called\n");
-
 }
 
-static int __devinit vspi_probe(struct platform_device *pdev, struct spi_board_info *chip, int isMaster)
+static int vspi_probe(struct platform_device *pdev, struct spi_board_info *chip,
+		      int isMaster)
 {
 	int ret;
 	struct spi_master *master;
 	struct vspi_dev *c;
 
-	master = spi_alloc_master( &pdev->dev, sizeof *c);
+	master = spi_alloc_master(&pdev->dev, sizeof *c);
 	if (!master)
 		return -ENODEV;
 
@@ -245,17 +250,17 @@ static int __devinit vspi_probe(struct platform_device *pdev, struct spi_board_i
 	c->master = master;
 	c->isMaster = isMaster;
 	sema_init(&c->sem, 1); // 1 = count
-	vspi_setup_cdev(c, isMaster ? 0 : 1); ///@todo currently only for two devices!
+	vspi_setup_cdev(
+		c, isMaster ? 0 : 1); ///@todo currently only for two devices!
 	c->max_speed_cps = param_speed_cps; ///@todo setup from board info?
 	// rp and wp will be allocated in open
 	///@todo what happens if transfer is used (so not char but device interface?)
 
-
 	platform_set_drvdata(pdev, c);
 
-
 	ret = spi_register_master(master);
-	printk(KERN_WARNING "vspi_probe spi_register_master returned %d\n", ret);
+	printk(KERN_WARNING "vspi_probe spi_register_master returned %d\n",
+	       ret);
 
 	c->device = spi_new_device(master, chip);
 	return ret;
@@ -287,26 +292,28 @@ static struct platform_driver vspi_driver = {
 static int __init vspi_init(void)
 {
 	int retval = 0;
-	dev_t dev=0;
+	dev_t dev = 0;
 
-	printk( KERN_ALERT "vspi_drv_init (HZ=%d) (c) M. Behr, 2011\n", HZ);
+	printk(KERN_ALERT "vspi_drv_init (HZ=%d) (c) M. Behr, 2011-2020\n", HZ);
 
 	init_waitqueue_head(&event_master);
 
-	if (param_major){
+	if (param_major) {
 		dev = MKDEV(param_major, param_minor);
 		retval = register_chrdev_region(dev, VSPI_NR_DEVS, "vspi_drv");
-	}else{
-		retval = alloc_chrdev_region(&dev, param_minor, VSPI_NR_DEVS, "vspi_drv");
+	} else {
+		retval = alloc_chrdev_region(&dev, param_minor, VSPI_NR_DEVS,
+					     "vspi_drv");
 		param_major = MAJOR(dev);
 	}
-	if (retval <0 ){
-		printk(KERN_WARNING "vspi_drv: can't get major %d\n", param_major);
+	if (retval < 0) {
+		printk(KERN_WARNING "vspi_drv: can't get major %d\n",
+		       param_major);
 		return retval;
 	}
 
 	// allocate the devices. We could have them static as well, as we don't change the number at load time
-/*
+	/*
 	vspi_devices = kmalloc( VSPI_NR_DEVS * sizeof( struct vspi_dev), GFP_KERNEL);
 	if (!vspi_devices){
 		retval = -ENOMEM;
@@ -319,26 +326,26 @@ static int __init vspi_init(void)
 	 * we register here our own board info to have probe working
 	 * (this can definetly be done differently but I didn't figure out yet ;-)
 	 */
-	platform_add_devices(vspi_platform_devices, ARRAY_SIZE(vspi_platform_devices));
+	platform_add_devices(vspi_platform_devices,
+			     ARRAY_SIZE(vspi_platform_devices));
 	vspi_probe(vspi_platform_devices[0], &vspi_board_info[0], 1);
 	vspi_probe(vspi_platform_devices[1], &vspi_board_info[1], 0);
-// not avail in modules	spi_register_board_info(vspi_board_info, ARRAY_SIZE(vspi_board_info));
-//	spi_new_device()
+	// not avail in modules	spi_register_board_info(vspi_board_info, ARRAY_SIZE(vspi_board_info));
+	//	spi_new_device()
 
-//	retval = platform_driver_probe(&vspi_driver, vspi_probe);
-//	printk(KERN_WARNING "vspi_drv: platform_driver_probe returned %d\n", retval);
+	//	retval = platform_driver_probe(&vspi_driver, vspi_probe);
+	//	printk(KERN_WARNING "vspi_drv: platform_driver_probe returned %d\n", retval);
 
 	return 0; // 0 = success,
-/*
+	/*
 fail:
 	vspi_exit();
 	return retval;
 	*/
 }
 
-
-module_init( vspi_init );
-module_exit( vspi_exit );
+module_init(vspi_init);
+module_exit(vspi_exit);
 
 // open:
 int vspi_open(struct inode *inode, struct file *filep)
@@ -348,31 +355,31 @@ int vspi_open(struct inode *inode, struct file *filep)
 	filep->private_data = dev;
 
 	if (dev->isMaster)
-		printk( KERN_NOTICE "vspi open master\n");
+		printk(KERN_NOTICE "vspi open master\n");
 	else
-		printk( KERN_NOTICE "vspi open slave\n");
+		printk(KERN_NOTICE "vspi open slave\n");
 
 	if (down_interruptible(&dev->sem))
 		return -ERESTARTSYS;
 
 	// allow max 1 user at the same time
-	if (dev->isOpened){
+	if (dev->isOpened) {
 		up(&dev->sem);
 		return -EUSERS;
-	}else
-		dev->isOpened+=1;
+	} else
+		dev->isOpened += 1;
 
 	// now we're holding/blocking the semaphore.
-	if (!dev->rp){
+	if (!dev->rp) {
 		dev->rp = kmalloc(param_max_bytes_per_ioreq, GFP_KERNEL);
-		if (!dev->rp){
+		if (!dev->rp) {
 			up(&dev->sem);
 			return -ENOMEM;
 		}
 	}
-	if (!dev->wp){
+	if (!dev->wp) {
 		dev->wp = kmalloc(param_max_bytes_per_ioreq, GFP_KERNEL);
-		if (!dev->wp){
+		if (!dev->wp) {
 			up(&dev->sem);
 			return -ENOMEM;
 		}
@@ -389,26 +396,26 @@ int vspi_release(struct inode *inode, struct file *filep)
 {
 	struct vspi_dev *dev = filep->private_data;
 
-	if(dev->isMaster)
-		printk( KERN_ALERT "vspi_release master\n");
+	if (dev->isMaster)
+		printk(KERN_ALERT "vspi_release master\n");
 	else
-		printk( KERN_ALERT "vspi_release slave\n");
+		printk(KERN_ALERT "vspi_release slave\n");
 
 	if (down_interruptible(&dev->sem))
 		return -ERESTARTSYS;
 
-	if (!dev->isOpened){
-		printk( KERN_WARNING "vspi_release called with no one opened\n");
-	} else{
-		dev->isOpened-=1;
+	if (!dev->isOpened) {
+		printk(KERN_WARNING "vspi_release called with no one opened\n");
+	} else {
+		dev->isOpened -= 1;
 	}
-	if (!dev->isOpened){
+	if (!dev->isOpened) {
 		// now free the buffers:
-		if (dev->wp){
+		if (dev->wp) {
 			kfree(dev->wp);
-			dev->wp=0;
+			dev->wp = 0;
 		}
-		if (dev->rp){
+		if (dev->rp) {
 			kfree(dev->rp);
 			dev->rp = 0;
 		}
@@ -426,7 +433,7 @@ int vspi_release(struct inode *inode, struct file *filep)
 
 static unsigned long calctimeforxfer_ns(unsigned cnt, u32 speed)
 {
-	return cnt*(NSEC_PER_SEC/speed);
+	return cnt * (NSEC_PER_SEC / speed);
 }
 
 /*
@@ -440,47 +447,50 @@ static unsigned long calctimeforxfer_ns(unsigned cnt, u32 speed)
 static unsigned calc_bytes_transfered(s64 time, u32 speed)
 {
 	u64 tmp;
-	if (time<=0)
+	if (time <= 0)
 		return 0;
-	tmp=(u64)time;
-	tmp*=speed;
+	tmp = (u64)time;
+	tmp *= speed;
 	do_div(tmp, NSEC_PER_SEC);
 	return tmp;
 }
 
 static int vspi_handletransfers(struct vspi_dev *dev,
-		struct spi_ioc_transfer *u_xfers, unsigned n_xfers)
+				struct spi_ioc_transfer *u_xfers,
+				unsigned n_xfers)
 {
-	int retval=-EFAULT;
-	unsigned n, total=0;
+	int retval = -EFAULT;
+	unsigned n, total = 0;
 	struct spi_ioc_transfer *u_tmp;
 	unsigned long delay_len;
-	struct timespec ts;
+	//struct timespec ts;
 	struct vspi_dev *slave;
 
 	slave = vspi_slave;
 	// assert !isMaster
 
-	for(n=0, u_tmp=u_xfers; n<n_xfers; n++, u_tmp++){
-		unsigned copied_to_slave=0;
+	for (n = 0, u_tmp = u_xfers; n < n_xfers; n++, u_tmp++) {
+		unsigned copied_to_slave = 0;
 		// for each transfer:
 		// check max len:
 		if (u_tmp->len > param_max_bytes_per_ioreq)
 			goto done;
 		// check access rights
-		if (u_tmp->rx_buf){
-			if (!access_ok(VERIFY_WRITE, (u8 __user*)
-					(uintptr_t) u_tmp->rx_buf, u_tmp->len))
+		if (u_tmp->rx_buf) {
+			if (!access_ok((u8 __user *)(uintptr_t)u_tmp->rx_buf,
+				       u_tmp->len))
 				goto done;
 		}
-		if (u_tmp->tx_buf){
+		if (u_tmp->tx_buf) {
 			// copy tx_buf to device wp buf:
 			// todo p1: need a semapore here! (but not the interchange one)
 			// we can copy to wp as outside this function no transfer is active
 			// and the other side checks xfer_len which is secured below.
 
-			if (copy_from_user(dev->wp, (const u8 __user *)
-					(uintptr_t) u_tmp->tx_buf, u_tmp->len))
+			if (copy_from_user(
+				    dev->wp,
+				    (const u8 __user *)(uintptr_t)u_tmp->tx_buf,
+				    u_tmp->len))
 				goto done;
 		}
 		// ok, now we have the tx-data in the dev->wp.
@@ -493,21 +503,22 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 		dev->xfer_actual = 0;
 		// init read to zero
 		// todo: use param whether not active is zero or 0xff
-		if (dev->rp && dev->xfer_len){
-			memset( dev->rp, 0, dev->xfer_len);
+		if (dev->rp && dev->xfer_len) {
+			memset(dev->rp, 0, dev->xfer_len);
 		}
 		// set start time of xfer:
-		ts = CURRENT_TIME;
-		dev->xfer_start_ns = timespec_to_ns(&ts);
+		//ts = CURRENT_TIME;
+		dev->xfer_start_ns = ktime_get_ns(); // timespec_to_ns(&ts);
 		// calc finish time of xfer:
-		if (dev->isMaster){
-			delay_len = calctimeforxfer_ns(dev->xfer_len, dev->max_speed_cps);
+		if (dev->isMaster) {
+			delay_len = calctimeforxfer_ns(dev->xfer_len,
+						       dev->max_speed_cps);
 			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
-			if (delay_len<=1000){
+			if (delay_len <= 1000) {
 				/* lets wait with sem being kept. The time is too short anyhow. */
 				ndelay(delay_len);
-			}else{
+			} else {
 				s64 toWait;
 				up(&sem_interchange); // give sem before waiting
 				// now wait to simulate blocking io.
@@ -516,14 +527,16 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				// no oneelse (slave) can do anything ... ndelay/udelay are non interruptible!
 				// but schedule_timer is only on timer tick granularity???
 
-				ts = CURRENT_TIME;
-				toWait = dev->xfer_stop_ns - timespec_to_ns(&ts);
+				//ts = CURRENT_TIME;
+				toWait =
+					dev->xfer_stop_ns -
+					ktime_get_ns(); //  timespec_to_ns(&ts);
 
-				if (toWait > NSEC_PER_MSEC){
+				if (toWait > NSEC_PER_MSEC) {
 					do_div(toWait, NSEC_PER_MSEC);
 					msleep_interruptible(toWait);
 					/* printk(KERN_NOTICE "vspi_drv: msleep for %lld ms\n", toWait); */
-				}else{
+				} else {
 					/* less than a ms but more than a us to wait.
 					 * let the schedule see at least whether any other task is available:
 					 * the remaining time will be waited below
@@ -531,22 +544,24 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 					schedule();
 				}
 				// wait for the remaining time in ns granularity:
-				ts = CURRENT_TIME;
-				toWait = dev->xfer_stop_ns - timespec_to_ns(&ts);
-				if (toWait>0)
+				//ts = CURRENT_TIME;
+				toWait =
+					dev->xfer_stop_ns -
+					ktime_get_ns(); //  timespec_to_ns(&ts);
+				if (toWait > 0)
 					ndelay(toWait);
 				if (down_interruptible(&sem_interchange))
 					return -ERESTARTSYS;
-
 			}
 
 			/* if there is a slave active, copy data to/from his buffers according
 			 * to the proper start times.
 			 */
 
-			if (slave->xfer_len){
+			if (slave->xfer_len) {
 				unsigned client_start_missed, client_end_missed;
-				unsigned needed = slave->xfer_len - slave->xfer_actual;
+				unsigned needed =
+					slave->xfer_len - slave->xfer_actual;
 				/* printk(KERN_NOTICE "vspi master with slave waiting for %d/%d :-)\n",
 						needed,
 						client->xfer_len);*/
@@ -558,51 +573,79 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * two checks: 1. check whether slave started later
 				 * 2. check whether slave will end earlier due to timeout
 				 */
-				if ((slave->xfer_start_ns > dev->xfer_stop_ns)||
-						(slave->xfer_stop_ns < dev->xfer_start_ns)){
+				if ((slave->xfer_start_ns >
+				     dev->xfer_stop_ns) ||
+				    (slave->xfer_stop_ns <
+				     dev->xfer_start_ns)) {
 					// missed the transfer completely so do nothing (not even waking up)
-					printk(KERN_NOTICE "vspi slave completely missed master\n");
-				}else{
-					if (slave->xfer_start_ns > dev->xfer_start_ns){
+					printk(KERN_NOTICE
+					       "vspi slave completely missed master\n");
+				} else {
+					if (slave->xfer_start_ns >
+					    dev->xfer_start_ns) {
 						// client missed the start. Let's calc how many bytes:
-						client_start_missed = calc_bytes_transfered(slave->xfer_start_ns - dev->xfer_start_ns,
-								dev->max_speed_cps);
-						printk(KERN_NOTICE "vspi slave missed %d bytes transfered\n", client_start_missed);
-					}else{
-						client_start_missed=0;
+						client_start_missed = calc_bytes_transfered(
+							slave->xfer_start_ns -
+								dev->xfer_start_ns,
+							dev->max_speed_cps);
+						printk(KERN_NOTICE
+						       "vspi slave missed %d bytes transfered\n",
+						       client_start_missed);
+					} else {
+						client_start_missed = 0;
 					}
 
-					if (slave->xfer_stop_ns < dev->xfer_stop_ns){
+					if (slave->xfer_stop_ns <
+					    dev->xfer_stop_ns) {
 						// slave will finish earlier due timeout
-						client_end_missed = calc_bytes_transfered(dev->xfer_stop_ns - slave->xfer_stop_ns,
-								dev->max_speed_cps);
-						printk(KERN_NOTICE "vspi slave will finish in between mstr xfer (missing %d)\n",
-								client_end_missed);
-					}else
+						client_end_missed = calc_bytes_transfered(
+							dev->xfer_stop_ns -
+								slave->xfer_stop_ns,
+							dev->max_speed_cps);
+						printk(KERN_NOTICE
+						       "vspi slave will finish in between mstr xfer (missing %d)\n",
+						       client_end_missed);
+					} else
 						client_end_missed = 0;
 
-					if (client_start_missed > min(needed, dev->xfer_len))
-						client_start_missed = min(needed, dev->xfer_len);
+					if (client_start_missed >
+					    min(needed, dev->xfer_len))
+						client_start_missed = min(
+							needed, dev->xfer_len);
 					needed -= client_start_missed;
 
-					if ((client_start_missed + needed + client_end_missed) > dev->xfer_len){
-						needed= dev->xfer_len - (client_start_missed + client_end_missed);
-						printk(KERN_NOTICE "vspi reduced needed to %d\n", needed);
+					if ((client_start_missed + needed +
+					     client_end_missed) >
+					    dev->xfer_len) {
+						needed = dev->xfer_len -
+							 (client_start_missed +
+							  client_end_missed);
+						printk(KERN_NOTICE
+						       "vspi reduced needed to %d\n",
+						       needed);
 					}
 
-					copied_to_slave = min(needed, dev->xfer_len-client_start_missed);
-					if (slave->rp && dev->wp){
-						memcpy( slave->rp+slave->xfer_actual, dev->wp+client_start_missed,
-							copied_to_slave);
+					copied_to_slave = min(
+						needed,
+						dev->xfer_len -
+							client_start_missed);
+					if (slave->rp && dev->wp) {
+						memcpy(slave->rp +
+							       slave->xfer_actual,
+						       dev->wp +
+							       client_start_missed,
+						       copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to slave read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
 					}
-					if (slave->wp && dev->rp){
-						memcpy( dev->rp+client_start_missed, slave->wp+slave->xfer_actual,
-								copied_to_slave);
+					if (slave->wp && dev->rp) {
+						memcpy(dev->rp +
+							       client_start_missed,
+						       slave->wp +
+							       slave->xfer_actual,
+						       copied_to_slave);
 						/* printk(KERN_NOTICE "vspi copied %d bytes to master read buffer\n",
 								min(needed, dev->xfer_len-client_start_missed)); */
-
 					}
 					slave->xfer_actual += copied_to_slave;
 					// the missed bytes are not put in the buffer. They are lost. Slave will wait for more or timeout or CS change
@@ -612,9 +655,11 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * delay_usecs handling here for master:
 				 * simply delay ;-)
 				 */
-				if (u_tmp->delay_usecs){
-					printk(KERN_NOTICE "vspi master udelay %dus\n", u_tmp->delay_usecs);
-					udelay( u_tmp->delay_usecs);
+				if (u_tmp->delay_usecs) {
+					printk(KERN_NOTICE
+					       "vspi master udelay %dus\n",
+					       u_tmp->delay_usecs);
+					udelay(u_tmp->delay_usecs);
 				}
 				/*
 				 * cs handling here:
@@ -622,29 +667,28 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 				 * if cs_change is set: set cs to high here (and back to low at start of loop)
 				 * then wake up slave again
 				 */
-				if (u_tmp->cs_change){
+				if (u_tmp->cs_change) {
 					slave->cs_latched_high++;
 					wake_up_interruptible(&event_master);
 				}
-
 			}
 
 			if (copied_to_slave != dev->xfer_len)
-				printk(KERN_NOTICE "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
-					copied_to_slave,
-					dev->xfer_len,
-					delay_len,
-					dev->xfer_start_ns,
-					dev->xfer_stop_ns);
-
-		}else{
+				printk(KERN_NOTICE
+				       "vspi_xfer master %d/%d bytes took %lu ns from %lld to %lld \n",
+				       copied_to_slave, dev->xfer_len,
+				       delay_len, dev->xfer_start_ns,
+				       dev->xfer_stop_ns);
+		} else {
 			// for a slave we send the endtime to starttime + max_span:
-			delay_len =((u_tmp->delay_usecs ?
-					u_tmp->delay_usecs : param_slave_default_delay_us)*NSEC_PER_USEC);
+			delay_len = ((u_tmp->delay_usecs ?
+					      u_tmp->delay_usecs :
+					      param_slave_default_delay_us) *
+				     NSEC_PER_USEC);
 
 			// as we wait with wait_event the delay_len has to be at least 1 timer tick:
 			if (delay_len < (NSEC_PER_SEC / HZ))
-				delay_len = NSEC_PER_SEC/HZ;
+				delay_len = NSEC_PER_SEC / HZ;
 
 			dev->xfer_stop_ns = dev->xfer_start_ns + delay_len;
 
@@ -658,32 +702,37 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 
 			up(&sem_interchange);
 			// now wait for timeout or master signaling us
-			wait_event_interruptible_timeout(event_master,
-					(dev->xfer_actual>=dev->xfer_len) ||(u_tmp->cs_change && dev->cs_latched_high),
-					((delay_len/NSEC_PER_USEC)*HZ / USEC_PER_SEC)+1 ); // waiting a bit longer is better than shorter!
+			wait_event_interruptible_timeout(
+				event_master,
+				(dev->xfer_actual >= dev->xfer_len) ||
+					(u_tmp->cs_change &&
+					 dev->cs_latched_high),
+				((delay_len / NSEC_PER_USEC) * HZ /
+				 USEC_PER_SEC) +
+					1); // waiting a bit longer is better than shorter!
 			if (down_interruptible(&sem_interchange))
 				return -ERESTARTSYS;
 
-			ts = CURRENT_TIME;
-			delay_len = timespec_to_ns(&ts) - dev->xfer_start_ns;
+			// ts = CURRENT_TIME;
+			delay_len = ktime_get_ns() - dev->xfer_start_ns;
 
 			if (dev->xfer_actual != dev->xfer_len)
-				printk(KERN_NOTICE "vspi_xfer slave %d/%d (%d) bytes took %lu ns from %lld to %lld\n",
-					dev->xfer_actual, dev->xfer_len, dev->cs_latched_high,
-					delay_len,
-					dev->xfer_start_ns,
-					dev->xfer_stop_ns);
+				printk(KERN_NOTICE
+				       "vspi_xfer slave %d/%d (%d) bytes took %lu ns from %lld to %lld\n",
+				       dev->xfer_actual, dev->xfer_len,
+				       dev->cs_latched_high, delay_len,
+				       dev->xfer_start_ns, dev->xfer_stop_ns);
 		}
 
 		// copy any data to rx_buf?
-		if (dev->isMaster){
+		if (dev->isMaster) {
 			// master always succeeds in tx and/or rx:
 			dev->xfer_actual = dev->xfer_len;
-		}else{
+		} else {
 		}
 		total += dev->xfer_actual;
 
-		if (dev->rp && dev->xfer_actual && u_tmp->rx_buf){
+		if (dev->rp && dev->xfer_actual && u_tmp->rx_buf) {
 			/* add bit error rate before copying to user space as a simulation
 			 * of line/reception noise.
 			 * ber is expressed as number of corrupt bytes in 2^32
@@ -691,24 +740,28 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 			 * for each transfer we change at max. 1 byte by random
 			 * (could be improved by e.g. each 256 bytes)
 			 */
-			if (param_ber>0){
-				unsigned long random_number[2]; unsigned long ber_cor;
+			if (param_ber > 0) {
+				unsigned long random_number[2];
+				unsigned long ber_cor;
 				ber_cor = param_ber * dev->xfer_actual;
-				get_random_bytes(random_number, sizeof(random_number));
-				if (random_number[0] <= ber_cor){
+				get_random_bytes(random_number,
+						 sizeof(random_number));
+				if (random_number[0] <= ber_cor) {
 					u16 *pos;
 					u8 *val;
-					pos = (u16*)&random_number[1];
+					pos = (u16 *)&random_number[1];
 					*pos %= dev->xfer_actual;
-					val = (u8*)(pos+1);
-					printk(KERN_NOTICE "vspi ber changed %d/%d to %d\n", *pos, dev->xfer_actual, *val);
+					val = (u8 *)(pos + 1);
+					printk(KERN_NOTICE
+					       "vspi ber changed %d/%d to %d\n",
+					       *pos, dev->xfer_actual, *val);
 					// ok, let's change random byte to random value:
 					dev->rp[*pos] = *val;
 				}
 			}
 
-			if (__copy_to_user((u8 __user*)(uintptr_t)u_tmp->rx_buf,
-					dev->rp, dev->xfer_actual)){
+			if (__copy_to_user((u8 __user *)(uintptr_t)u_tmp->rx_buf,
+					   dev->rp, dev->xfer_actual)) {
 				retval = -EFAULT;
 				up(&sem_interchange);
 				goto done;
@@ -726,10 +779,10 @@ static int vspi_handletransfers(struct vspi_dev *dev,
 	 * for master set cs to high here (if not already set)
 	 * this is needed as single transactions do this only when cs_change is set to 0
 	 */
-	if (dev->isMaster){
+	if (dev->isMaster) {
 		// we do this without the semaphore being held, as the event is used for signalling as well and
 		// it's just the master who increases the value (and the remaining race cond can happen with real hw as well
-		if (!slave->cs_latched_high){
+		if (!slave->cs_latched_high) {
 			slave->cs_latched_high++;
 			wake_up_interruptible(&event_master);
 		}
@@ -741,7 +794,8 @@ done:
 }
 
 // read:
-ssize_t vspi_read(struct file *filep, char __user *buf, size_t count, loff_t *f_pos)
+ssize_t vspi_read(struct file *filep, char __user *buf, size_t count,
+		  loff_t *f_pos)
 {
 	struct spi_ioc_transfer xfer;
 	struct vspi_dev *dev = filep->private_data;
@@ -750,7 +804,7 @@ ssize_t vspi_read(struct file *filep, char __user *buf, size_t count, loff_t *f_
 		return -EMSGSIZE;
 
 	// put request in a spi_ioc_transfer struct:
-	memset( &xfer, 0, sizeof(struct spi_ioc_transfer));
+	memset(&xfer, 0, sizeof(struct spi_ioc_transfer));
 	xfer.rx_buf = (uintptr_t)buf;
 	xfer.len = count;
 	// keep rest at zero. can see later whether more infos are needed at _handletransfers
@@ -758,33 +812,30 @@ ssize_t vspi_read(struct file *filep, char __user *buf, size_t count, loff_t *f_
 }
 
 // write:
-ssize_t vspi_write(struct file *filep, const char __user *buf, size_t count, loff_t *f_pos)
+ssize_t vspi_write(struct file *filep, const char __user *buf, size_t count,
+		   loff_t *f_pos)
 {
 	struct spi_ioc_transfer xfer;
 	struct vspi_dev *dev = filep->private_data;
 
-	if (count > param_max_bytes_per_ioreq){
-		printk(" vspi_write tried to write %d bytes\n", count);
+	if (count > param_max_bytes_per_ioreq) {
+		printk(" vspi_write tried to write %ld bytes\n", count);
 		return -EMSGSIZE;
 	}
 	// put request in a spi_ioc_transfer struct:
 
-	memset( &xfer, 0, sizeof(struct spi_ioc_transfer));
-	xfer.tx_buf = (uintptr_t) buf;
+	memset(&xfer, 0, sizeof(struct spi_ioc_transfer));
+	xfer.tx_buf = (uintptr_t)buf;
 	xfer.len = count;
 	// keep rest at zero for now.
 	return vspi_handletransfers(dev, &xfer, 1);
 }
 
-
-
-
 // the ioctl implementation. This is our main function. read/write will just use this.
 // this is used as .unlocked_ioctl!
-long vspi_ioctl(struct file *filep,
-		unsigned int cmd, unsigned long arg)
+long vspi_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
-	int err=0;
+	int err = 0;
 	long retval = 0;
 	u32 tmp;
 	unsigned n_ioc;
@@ -801,39 +852,38 @@ long vspi_ioctl(struct file *filep,
 	 */
 
 	if (_IOC_DIR(cmd) & _IOC_READ)
-		err = !access_ok(VERIFY_WRITE,
-				(void __user *)arg, _IOC_SIZE(cmd));
+		err = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
 	if (err == 0 && _IOC_DIR(cmd) & _IOC_WRITE)
-		err = !access_ok(VERIFY_READ,
-				(void __user *)arg, _IOC_SIZE(cmd));
+		err = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
 	if (err)
 		return -EFAULT;
 
 	// todo guard against device removal while we do ioctl?
 	// do we have to use block the semaphore here?? (will take a long time...)
 
-	switch (cmd){
+	switch (cmd) {
 	/* read requests */
 	case SPI_IOC_RD_MODE:
 		retval = __put_user(dev->mode & SPI_MODE_MASK,
-				(__u8 __user *)arg);
+				    (__u8 __user *)arg);
 		break;
 	case SPI_IOC_RD_LSB_FIRST:
 		retval = __put_user((dev->mode & SPI_LSB_FIRST) ? 1 : 0,
-				(__u8 __user *)arg);
+				    (__u8 __user *)arg);
 		break;
 	case SPI_IOC_RD_BITS_PER_WORD:
 		retval = __put_user(dev->bits_per_word, (__u8 __user *)arg);
 		break;
 	case SPI_IOC_RD_MAX_SPEED_HZ:
-		retval = __put_user(dev->max_speed_cps*8, (__u32 __user *)arg);
+		retval =
+			__put_user(dev->max_speed_cps * 8, (__u32 __user *)arg);
 		break;
 
 	/* write requests */
 	case SPI_IOC_WR_MODE:
 		retval = __get_user(tmp, (__u8 __user *)arg);
-		if (retval == 0){
-			if (tmp & ~SPI_MODE_MASK){
+		if (retval == 0) {
+			if (tmp & ~SPI_MODE_MASK) {
 				retval = -EINVAL;
 				break;
 			}
@@ -843,7 +893,7 @@ long vspi_ioctl(struct file *filep,
 		break;
 	case SPI_IOC_WR_LSB_FIRST:
 		retval = __get_user(tmp, (__u8 __user *)arg);
-		if (0 == retval){
+		if (0 == retval) {
 			if (tmp)
 				dev->mode |= SPI_LSB_FIRST;
 			else
@@ -852,34 +902,35 @@ long vspi_ioctl(struct file *filep,
 		break;
 	case SPI_IOC_WR_BITS_PER_WORD:
 		retval = __get_user(tmp, (__u8 __user *)arg);
-		if (0 == retval){
+		if (0 == retval) {
 			dev->bits_per_word = tmp;
 		}
 		break;
 	case SPI_IOC_WR_MAX_SPEED_HZ:
 		retval = __get_user(tmp, (__u32 __user *)arg);
-		if (0 == retval){
-			if ((tmp/8) >= param_min_speed_cps ){
-				if ((tmp/8) <= param_speed_cps)
-					dev->max_speed_cps = (tmp/8);
+		if (0 == retval) {
+			if ((tmp / 8) >= param_min_speed_cps) {
+				if ((tmp / 8) <= param_speed_cps)
+					dev->max_speed_cps = (tmp / 8);
 				else
 					dev->max_speed_cps = param_speed_cps;
 			}
-			printk(KERN_NOTICE "vspi_drv set speed to %dcps (wanted %dHz)\n",
-					dev->max_speed_cps, tmp);
+			printk(KERN_NOTICE
+			       "vspi_drv set speed to %dcps (wanted %dHz)\n",
+			       dev->max_speed_cps, tmp);
 		}
 		break;
 	default:
 		/* segmented and/or full-duplex I/O request */
-		if (_IOC_NR(cmd) != _IOC_NR(SPI_IOC_MESSAGE(0))
-				|| _IOC_DIR(cmd) != _IOC_WRITE){
+		if (_IOC_NR(cmd) != _IOC_NR(SPI_IOC_MESSAGE(0)) ||
+		    _IOC_DIR(cmd) != _IOC_WRITE) {
 			// todo bug: we should allow _IOC_READ without _IOC_WRITE
 			// as well. But currently spidev behaves the same way!
 			retval = -ENOTTY;
 			break;
 		}
 		tmp = _IOC_SIZE(cmd);
-		if ((tmp % sizeof(struct spi_ioc_transfer)) != 0){
+		if ((tmp % sizeof(struct spi_ioc_transfer)) != 0) {
 			retval = -EINVAL;
 			break;
 		}
@@ -889,11 +940,11 @@ long vspi_ioctl(struct file *filep,
 
 		/* copy requests: */
 		ioc = kmalloc(tmp, GFP_KERNEL);
-		if (!ioc){
+		if (!ioc) {
 			retval = -ENOMEM;
 			break;
 		}
-		if (__copy_from_user(ioc, (void __user *)arg, tmp)){
+		if (__copy_from_user(ioc, (void __user *)arg, tmp)) {
 			kfree(ioc);
 			retval = -EFAULT;
 			break;
@@ -906,10 +957,8 @@ long vspi_ioctl(struct file *filep,
 	return retval;
 }
 
-
-
-
 // todo p3 define license MODULE_LICENSE("proprietary");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Matthias Behr");
-MODULE_DESCRIPTION("Virtual SPI driver with unreliability features (patents pending)\n");
+MODULE_DESCRIPTION(
+	"Virtual SPI driver with unreliability features (patents pending)\n");
