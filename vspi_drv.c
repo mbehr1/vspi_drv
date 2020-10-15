@@ -37,6 +37,9 @@
 
 /*
  * to-do list: (global, for features, enhancements,...
+ * todo p1: fix "Device 'vspi-spi_master/slave.1.auto' does not have a release() function, it is broken and must be fixed. See Documentation/kobject.txt."
+ * todo p1: fix "platform vspi-spi_master: controller is unqueued, this is deprecated"
+ * todo p2: replace master/slave names
  * todo p2: implement param for idle value on mosi line (for master reading without slave sending)
  * todo p3: check maximum values for .delay_us (16bit) vs. our default value and int overflow handling
  * todo p2: add statistic infos (e.g. bytes transferred, timeouts, bit errors,...)
